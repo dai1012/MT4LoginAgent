@@ -128,6 +128,15 @@ class AgentRuntime:
         self.started_at = datetime.now(UTC)
         self._started = False
         self._stopped = False
+        self._test_runner: Any | None = None
+
+    @property
+    def test_runner(self):
+        if self._test_runner is None:
+            from app.testing.runner import TestRunner
+
+            self._test_runner = TestRunner(self)
+        return self._test_runner
 
     def __del__(self) -> None:
         with suppress(Exception):

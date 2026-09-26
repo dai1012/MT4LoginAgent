@@ -33,6 +33,34 @@ class SlackSettingsUpdate(APIModel):
         return value
 
 
+class TestPhaseRequest(APIModel):
+    phase: str = Field(min_length=1, max_length=40)
+    account_id: str | None = Field(default=None, max_length=64)
+
+
+class RealLoginRequest(APIModel):
+    account_id: str = Field(min_length=1, max_length=64)
+    otp: SecretStr | None = None
+    confirmed: bool = False
+    full_slack: bool = False
+
+
+class TestSelectorApplyRequest(APIModel):
+    account_id: str = Field(min_length=1, max_length=64)
+    confirmed: bool = False
+
+
+class GroupTestRequest(APIModel):
+    group_name: str = Field(min_length=1, max_length=64)
+    otp: SecretStr
+    confirmed: bool = False
+
+
+class SlackAwaitRequest(APIModel):
+    session_id: str = Field(min_length=8, max_length=80)
+    timeout_seconds: int = Field(default=120, ge=5, le=300)
+
+
 class ApiMessage(APIModel):
     message: str
 

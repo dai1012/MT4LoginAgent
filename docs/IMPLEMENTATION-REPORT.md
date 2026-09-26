@@ -115,13 +115,19 @@
 - worker 退出竞态会再次 drain Pipe；worker `sender.send()` 失败不会打印第三方 traceback。
 - 端口探测不再设置 `SO_REUSEADDR`；Windows 使用 `SO_EXCLUSIVEADDRUSE`（若存在）。
 - `agent.lock`、Windows UIA 依赖 self-check、`save_login_info` 回读、非 ASCII token、新建认证窗口、枚举失败、单实例锁、shutdown 拒绝新任务、单调时钟 OTP 年龄和 mid-group OTP 过期均补了针对性测试。
+## Windows Acceptance Test Runner
 
+- 新增 `src/app/testing/`：统一 TestResult/Report 模型、Environment Safe Checks、MT4/UIA Discovery、Slack Safe Tests、报告生成和 secret redaction。
+- Web Admin 的 **Windows Test** 页面和 `test-windows.bat`/CLI 调用同一个 Test Runner Core。
+- 默认只执行 SAFE；Real Login、Group、Full Slack E2E 和 destructive cases 需要人工确认或 `MANUAL_TEST_REQUIRED`。
+- UIA diagnostic、HTML/JSON/log 报告写入 runtime data-dir，报告不包含 OTP/token/secret。
+- Full Slack E2E 不由 Runner 自动发送 OTP；用户手动发送命令，Runner 等待 History 结果并关联 session id。
+- 新增 Test Runner 自身测试：模型/报告序列化、HTML/JSON、secret redaction、UIA redaction、Windows guard、阶段顺序、Real Login confirmation、Group partial、Slack session、API 和分发入口。
 
-Round 5 最终质量门完成后，以实际命令输出为准。当前最近一次双版本回归为：
 
 ```text
-Python 3.14: 81 passed
-Python 3.11: 81 passed
+Python 3.14: 97 passed
+Python 3.11: 97 passed
 Ruff: All checks passed
 ```
 

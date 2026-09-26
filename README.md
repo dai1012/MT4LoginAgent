@@ -249,7 +249,51 @@ History 是 append-only/read-only 审计记录，只显示：
 - 同一 Slack delivery 的重复投递会被进程内和本地 digest guard 抑制。
 - 同一账号已有登录任务时，新的不同命令会被拒绝，而不是并发操作同一窗口。
 
-## 7. 数据和 Secrets 位置
+## 7. Windows Acceptance Test Runner
+
+Windows 拿到机器后，不必再手工逐条执行几十项检查。双击：
+
+```text
+test-windows.bat
+```
+
+它会启动同一个 Web Admin，并打开 **Windows Test** 页面；也可以在已运行的 Web Admin 中直接进入该页面。CLI 和 Web 页面调用同一个 Test Runner Core。
+
+### 阶段
+
+1. **Phase 1 — Environment / Safe Checks**：不需要 OTP。检查 Windows、Python、pywinauto、UIA、COM、data-dir、日志、Web 配置、Account 静态配置、Slack 配置和本地 token 状态。
+2. **Phase 2 — MT4 Discovery / UIA Inspection**：选择 Account，不输入 OTP。检查 terminal/Profile/进程，枚举窗口和 Login ID、OTP、Server、Login button、Save checkbox 候选控件，生成 `uia-tree-sanitized.json`。
+3. **Phase 3 — Slack Safe Tests**：检查 token、Socket Mode、Bot identity、allowlist、malformed/unknown/duplicate 路径。不会向真实 Slack 批量发消息；需要真实命令时显示 `ACTION REQUIRED`。
+4. **Phase 4 — Real Login E2E**：必须勾选确认并输入一次性 OTP；默认只走本机 Login Core → MT4。Full Slack E2E 不会由 Test Runner 自动发送 OTP，而是让你手动发送 `/mt4 A <OTP>`，再用 session id 等待结果。
+5. **Phase 5 — Group Test（可选）**：按 Group 顺序执行，逐个显示结果，支持部分失败；不会默认运行。
+
+### 不会自动执行的项目
+
+以下项目显示为 `MANUAL_TEST_REQUIRED`，只在专用测试环境由用户明确执行：
+
+- 故意输入错误 OTP；
+- 等待 OTP 过期；
+- kill MT4/worker；
+- 制造多个 terminal.exe；
+- 改系统时间；
+- UAC/管理员切换；
+- broker maintenance；
+- 网络中断。
+
+### 报告位置
+
+报告写在 runtime data 目录，不写在源码目录：
+
+```text
+<data-dir>/reports/<run-id>/report.html
+<data-dir>/reports/<run-id>/report.json
+<data-dir>/reports/<run-id>/uia-tree-sanitized.json
+<data-dir>/reports/<run-id>/logs-sanitized.txt
+```
+
+报告不包含 OTP、Slack token、Local admin token、HMAC key 或未脱敏的 Login ID。UIA diagnostic 不读取密码控件明文 value，并限制节点数量。报告可以交给开发者分析；清除时删除对应的 `<data-dir>/reports/<run-id>/` 目录即可。
+
+## 8. 数据和 Secrets 位置
 
 默认数据目录：
 
@@ -267,6 +311,7 @@ History 是 append-only/read-only 审计记录，只显示：
 | `history.jsonl` | OTP-free 审计记录 |
 | `dedup.json` | 仅保存去重摘要，不保存原始 OTP |
 | `logs/agent.log` | 已脱敏日志 |
+| `reports/` | Windows Acceptance Test 的 HTML/JSON/diagnostic 报告 |
 | `agent.lock` | 单实例锁文件，不应手工删除正在运行中的锁 |
 
 这些文件已被 `.gitignore` 排除。不要把自定义 data-dir 放在 Git worktree 中而不加入 `.gitignore`。
@@ -279,7 +324,7 @@ Secrets 安全边界：
 - 丢失 admin token：停止 Agent，编辑 `secrets.json` 删除 `web_admin_token` 字段（保留 Slack token），重启后重新生成。
 - 泄漏 Slack token：立即在 Slack 撤销并重新生成。
 
-## 8. 停止、更新、卸载
+## 9. 停止、更新、卸载
 
 ### 停止
 
@@ -301,7 +346,7 @@ Secrets 安全边界：
 4. 删除 `%LOCALAPPDATA%\RakutenMT4Agent`（如需保留审计记录，先备份）。
 5. Rakuten MT4 Profile、券商账户和 MT4 本身不属于本项目卸载范围。
 
-## 9. 网络连接
+## 10. 网络连接
 
 运行时程序主动连接：
 
@@ -311,7 +356,7 @@ Secrets 安全边界：
 
 安装阶段 `pip` 可能访问 Python 包索引。没有 telemetry、analytics、AI API、Docker、Redis 或云端自建服务。
 
-## 10. 故障排查
+## 11. 故障排查
 
 | 现象 | 处理 |
 |---|---|
@@ -329,7 +374,7 @@ Secrets 安全边界：
 | UI 显示 unverified | 没有观察到认证主窗口状态转换，按 Windows 清单检查 selector/title，不要手动放行 |
 | 需要日志 | 查看 `%LOCALAPPDATA%\RakutenMT4Agent\logs\agent.log`，日志已脱敏 |
 
-## 11. 开发命令
+## 12. 开发命令
 
 ```bash
 python3.11 -m venv .venv
@@ -339,7 +384,7 @@ python3.11 -m venv .venv
 .venv/bin/python -m app.main --data-dir ./.local-data
 ```
 
-## 12. 仍需 Windows/Rakuten 实测的内容
+## 13. 仍需 Windows/Rakuten 实测的内容
 
 以下项目没有在当前 macOS 环境被“验证”为真实成功：
 

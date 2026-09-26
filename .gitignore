@@ -31,6 +31,7 @@ htmlcov/
 **/dedup.json
 **/agent.lock
 **/logs/
+**/reports/
 **/*.tmp
 **/*.bak
 **/*.swp

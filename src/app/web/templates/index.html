@@ -29,6 +29,7 @@
       <button class="tab" data-tab="groups">Groups</button>
       <button class="tab" data-tab="slack">Slack</button>
       <button class="tab" data-tab="history">History</button>
+      <button class="tab" data-tab="windows-test">Windows Test</button>
     </nav>
 
     <section id="dashboard" class="page active">
@@ -104,6 +105,38 @@
     <section id="history" class="page">
       <div class="section-heading"><div><p class="eyebrow">AUDIT TRAIL</p><h2>History</h2><p class="muted">只记录安全审计字段：时间、sender、target、结果、错误分类、耗时。OTP 永远不会出现在这里。</p></div><button class="button secondary" data-action="refresh-history">刷新</button></div>
       <div id="history-table" class="panel table-wrap"></div>
+    </section>
+    <section id="windows-test" class="page">
+      <div class="section-heading"><div><p class="eyebrow">WINDOWS ACCEPTANCE</p><h2>Windows Test</h2><p class="muted">安全优先：默认只执行 SAFE 检查；Real Login、Group 和 Full Slack E2E 需要明确确认。</p></div><button class="button secondary" data-action="refresh-test-status">刷新</button></div>
+      <div id="test-platform-notice" class="status-banner"></div>
+      <div class="panel form-panel">
+        <h3>Phase 1 — Environment / Safe Checks</h3>
+        <p class="muted">不需要 OTP；检查 Windows、Python、pywinauto、data-dir、Web、配置和 Account 静态完整性。</p>
+        <button class="button" data-action="run-test-environment">Run Phase 1</button>
+        <h3>Phase 2 — MT4 Discovery / UIA</h3>
+        <p class="muted">不输入 OTP；枚举进程和 UIA 候选控件。不会自动修改正式 Account。</p>
+        <label>Account<select id="test-account"><option value="">选择 Account</option></select></label>
+        <button class="button" data-action="run-test-discovery">Detect</button>
+        <div id="test-controls"></div>
+        <h3>Phase 3 — Slack Safe Tests</h3>
+        <p class="muted">不会向真实 Slack 发送测试消息；真实命令会显示 ACTION REQUIRED。</p>
+        <button class="button" data-action="run-test-slack">Run Phase 3</button>
+        <h3>Phase 4 — Real Login（必须人工确认）</h3>
+        <div class="warning-box">REAL ACCOUNT ACTION：这会尝试登录选中的 Rakuten MT4。OTP 只在内存中使用，不进入报告、日志或 History。</div>
+        <label>OTP（仅本次测试）<input id="test-otp" type="password" autocomplete="off" placeholder="测试 OTP"></label>
+        <label class="checkbox"><input id="test-real-confirm" type="checkbox"> 我确认这是安全测试 Account，并已准备好新的 OTP</label>
+        <button class="button" data-action="run-test-real-login">Start real login test</button>
+        <button class="button secondary" data-action="run-test-full-slack">Start Full Slack E2E（不会自动发送 OTP）</button>
+        <div id="test-slack-session" class="muted"></div>
+        <button class="button secondary" data-action="await-test-slack">Await Full Slack result</button>
+        <h3>Phase 5 — Group（可选，人工确认）</h3>
+        <label>Group<select id="test-group"><option value="">选择 Group</option></select></label>
+        <label class="checkbox"><input id="test-group-confirm" type="checkbox"> 我已检查 Group 成员和执行顺序</label>
+        <button class="button" data-action="run-test-group">Start Group test</button>
+        <h3>Reports</h3>
+        <div id="test-reports"></div>
+      </div>
+      <div id="test-results" class="panel table-wrap"></div>
     </section>
   </main>
   <div id="toast" class="toast" role="status"></div>

@@ -60,6 +60,18 @@
 - Slack ack/submit 失败：释放 dedup key，允许安全重试。
 - Windows worker 超时：终止独立子进程，不留下继续填表的线程。
 
+## Windows Acceptance Test Runner
+
+- Test Runner 是现有 `LoginService`、`WindowsAutomation`、Slack gateway 和 Web Admin 的编排层，不是第二套登录实现。
+- Phase 1/2/3 默认只执行 SAFE 检查，不输入 OTP、不启动真实登录、不向真实 Slack 批量发消息。
+- Real Login、Group 和 Full Slack E2E 都必须由用户在 Web UI 明确确认。
+- Test Runner 的 OTP 只在进程内存中存在；不写入 command line、报告、UIA diagnostic、History、临时文件或 traceback。
+- UIA diagnostic 不读取密码控件明文 value，并对 Login ID 和节点数量做限制/脱敏。
+- HTML/JSON 报告只保存布尔型 `secret_leak_detected`；报告目录和文件使用本地私有权限，Windows 实际 ACL 仍需实机确认。
+- 故意错误 OTP、kill 进程、多实例、改系统时间、UAC、网络中断等破坏性测试默认是 `MANUAL_TEST_REQUIRED`。
+- macOS/Linux 页面和 CLI 只能显示 `NOT_RUN`/`WINDOWS_REAL_TEST_REQUIRED`，不能显示真实 Windows PASS。
+
+
 ## Reporting
 
 不要提交真实 OTP、Login ID、token、完整异常 dump 或 Slack payload。报告问题时只提供：版本、平台、Account alias、错误 category、脱敏日志片段和 `WINDOWS_REAL_TEST_REQUIRED` 状态。

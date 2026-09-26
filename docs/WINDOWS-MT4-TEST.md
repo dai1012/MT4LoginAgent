@@ -4,6 +4,41 @@
 
 本文件是最终实机 gate。当前 macOS/Linux 环境和自动化测试没有证明任何真实 Rakuten MT4 登录成功；不要把 Mock、Web contract 或静态检查结果当作实机证据。
 
+## 自动化 Test Runner 入口
+
+在 Windows 上双击：
+
+```text
+test-windows.bat
+```
+
+也可以打开已有 Web Admin 的 **Windows Test** 页面。两者调用同一个 Test Runner Core。
+
+```text
+Phase 1 Environment / Safe Checks   AUTOMATED
+Phase 2 MT4 Discovery / UIA         SEMI_AUTOMATED
+Phase 3 Slack Safe Tests            SEMI_AUTOMATED
+Phase 4 Internal Real Login         MANUAL CONFIRMATION
+Phase 4 Full Slack E2E              SEMI_AUTOMATED / MANUAL
+Phase 5 Group                       OPTIONAL / MANUAL CONFIRMATION
+Destructive cases                   MANUAL_TEST_REQUIRED
+```
+
+Test Runner 默认不会输入 OTP、启动真实登录或向真实 Slack 批量发消息。Real Login 和 Group 必须在 Web UI 中明确确认；Full Slack E2E 由用户自己发送 `/mt4 A <OTP>`，Test Runner 只等待并关联结果。
+
+每次运行会在 runtime data 目录生成：
+
+```text
+reports/<run-id>/report.html
+reports/<run-id>/report.json
+reports/<run-id>/uia-tree-sanitized.json
+reports/<run-id>/logs-sanitized.txt
+```
+
+报告不包含 OTP、Slack token、Local admin token、HMAC key 或未脱敏 Login ID。报告可以直接提供给开发者分析。
+
+以下人工清单仍需按本文件执行；Test Runner 会把它们标成 `MANUAL_TEST_REQUIRED`。
+
 ## 0. 安全准备
 
 - [ ] 使用专用 Windows 本地账户和专用测试/观察 MT4 账户。
@@ -106,7 +141,8 @@ Windows 上以下字段全部是硬性要求：
 
 - [ ] `agent.log`、`history.jsonl`、`accounts.json` 中搜索本次 OTP，结果为 0。
 - [ ] 浏览器 DOM、API 响应、Slack SDK debug 输出中没有 token/OTP。
-- [ ] `secrets.json`、`.tmp`、`dedup.json`、`.bak`、`.swp` 均不会进入 Git。
+- [ ] `secrets.json`、`.tmp`、`dedup.json`、`.bak`、`.swp`、`reports/` 均不会进入 Git。
+- [ ] Test Runner 报告目录只允许本机验收用户读取；报告中没有 OTP、token、HMAC key 或密码明文。
 - [ ] 确认 `dedup.json` 只有摘要，没有原始 OTP。
 - [ ] 确认 Web 只监听 `127.0.0.1`，非 localhost Host 被拒绝。
 - [ ] 确认 Origin 跨源写请求被拒绝，Local admin token 缺失时 API 返回 401。

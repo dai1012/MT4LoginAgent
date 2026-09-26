@@ -5,6 +5,7 @@ include requirements.txt
 include requirements-dev.txt
 include install.bat
 include start.bat
+include test-windows.bat
 include slack-app-manifest.yaml
 recursive-include config *.json *.md
 recursive-include docs *.md

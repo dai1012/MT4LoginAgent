@@ -12,7 +12,12 @@ from app.models.api import (
     AccountEnabledUpdate,
     GeneralSettingsUpdate,
     GroupOrderUpdate,
+    GroupTestRequest,
+    RealLoginRequest,
+    SlackAwaitRequest,
     SlackSettingsUpdate,
+    TestPhaseRequest,
+    TestSelectorApplyRequest,
 )
 from app.models.domain import AccountCreate, AccountPatch, GroupCreate, GroupPatch
 from app.models.errors import (
@@ -173,7 +178,107 @@ def create_api_router(runtime: AgentRuntime) -> APIRouter:
             ),
         )
 
-    # History intentionally exposes only the schema below; there is no OTP field.
+    # Windows acceptance tests. These routes always call the same TestRunner core.
+    @router.get("/test/windows")
+    async def test_windows_status() -> dict[str, object]:
+        return runtime.test_runner.status()
+
+    @router.post("/test/windows/phase")
+    async def run_test_windows_phase(payload: TestPhaseRequest) -> dict[str, object]:
+        from app.testing.models import TestPhase
+
+        try:
+            phase = TestPhase(payload.phase)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Unknown test phase") from exc
+        results = await runtime.test_runner.run_phase(phase, account_id=payload.account_id)
+        return {
+            "results": [item.safe_dict() for item in results],
+            "status": runtime.test_runner.status(),
+        }
+
+    @router.post("/test/windows/real-login")
+    async def run_test_windows_real_login(payload: RealLoginRequest) -> dict[str, object]:
+        if payload.otp is None and not payload.full_slack:
+            raise HTTPException(
+                status_code=422, detail="OTP is required for an internal real login"
+            )
+        otp = payload.otp.get_secret_value() if payload.otp is not None else ""
+        results = await runtime.test_runner.run_real_login(
+            payload.account_id,
+            otp,
+            confirmed=payload.confirmed,
+            full_slack=payload.full_slack,
+        )
+        # Never echo the request body or OTP back to the browser.
+        return {
+            "results": [item.safe_dict() for item in results],
+            "status": runtime.test_runner.status(),
+        }
+
+    @router.post("/test/windows/slack/await")
+    async def await_test_windows_slack_result(payload: SlackAwaitRequest) -> dict[str, object]:
+        results = await runtime.test_runner.await_slack_result(
+            payload.session_id,
+            timeout_seconds=payload.timeout_seconds,
+        )
+        return {
+            "results": [item.safe_dict() for item in results],
+            "status": runtime.test_runner.status(),
+        }
+
+    @router.post("/test/windows/group")
+    async def run_test_windows_group(payload: GroupTestRequest) -> dict[str, object]:
+        otp = payload.otp.get_secret_value()
+        results = await runtime.test_runner.run_group(
+            payload.group_name,
+            otp,
+            confirmed=payload.confirmed,
+        )
+        return {
+            "results": [item.safe_dict() for item in results],
+            "status": runtime.test_runner.status(),
+        }
+
+    @router.post("/test/windows/selectors")
+    async def apply_test_windows_selectors(payload: TestSelectorApplyRequest) -> dict[str, object]:
+        runner = runtime.test_runner
+        result = runner.apply_selectors(
+            payload.account_id,
+            runner.detected_controls,
+            confirmed=payload.confirmed,
+        )
+        await runner.refresh_report()
+        return result
+
+    @router.get("/test/windows/report")
+    async def list_test_windows_reports() -> list[dict[str, object]]:
+        root = runtime.paths.reports_dir
+        if not root.exists():
+            return []
+        output = []
+        for directory in sorted(root.iterdir(), reverse=True):
+            if directory.is_dir() and (directory / "report.json").is_file():
+                output.append({"report_id": directory.name})
+        return output[:50]
+
+    @router.post("/test/windows/report/{report_id}/select")
+    async def select_test_windows_report(report_id: str) -> dict[str, object]:
+        return runtime.test_runner.select_report(report_id)
+
+    @router.get("/test/windows/report/{filename}")
+    async def download_test_windows_report(filename: str):
+        try:
+            path = runtime.test_runner.report_path(filename)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=404, detail="Acceptance report artifact not found"
+            ) from exc
+        media_type = "application/json" if filename.endswith(".json") else "text/plain"
+        if filename.endswith(".html"):
+            media_type = "text/html"
+        return FileResponse(path, media_type=media_type, filename=Path(filename).name)
+
     @router.get("/history")
     async def list_history(limit: int = 100) -> list[dict[str, object]]:
         bounded = min(max(limit, 1), 500)

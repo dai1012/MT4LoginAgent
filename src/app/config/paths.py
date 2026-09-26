@@ -65,8 +65,13 @@ class AppPaths:
     def log_dir(self) -> Path:
         return self.data_dir / "logs"
 
+    @property
+    def reports_dir(self) -> Path:
+        return self.data_dir / "reports"
+
     def ensure(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.reports_dir.mkdir(parents=True, exist_ok=True)
         with suppress(OSError):
             self.data_dir.chmod(0o700)
