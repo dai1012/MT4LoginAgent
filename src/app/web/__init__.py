@@ -1,0 +1,1 @@
+"""Localhost FastAPI Web Admin."""

@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Rakuten MT4 Remote Login Agent</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">LOCAL CONTROL PLANE</p>
+      <h1>Rakuten MT4 Remote Login Agent <span>V1</span></h1>
+      <p class="subtitle">源码可审计 · 仅监听 localhost · OTP 不进入日志或历史 · 首次访问需 start.bat 显示的 Local admin token</p>
+    </div>
+    <div class="runtime-pill" id="runtime-pill"><span class="dot"></span><span>正在连接…</span></div>
+  </header>
+
+  <div id="admin-token-bar" class="token-bar hidden">
+    <span>Web Admin 需要 Local admin token。打开 start.bat 控制台复制提示中的 token。</span>
+    <button class="button secondary" data-action="set-admin-token">输入 token</button>
+  </div>
+
+  <main class="shell">
+    <nav class="tabs" aria-label="Web Admin sections">
+      <button class="tab active" data-tab="dashboard">Dashboard</button>
+      <button class="tab" data-tab="accounts">Accounts</button>
+      <button class="tab" data-tab="groups">Groups</button>
+      <button class="tab" data-tab="slack">Slack</button>
+      <button class="tab" data-tab="history">History</button>
+    </nav>
+
+    <section id="dashboard" class="page active">
+      <div class="section-heading"><div><p class="eyebrow">OVERVIEW</p><h2>运行状态</h2></div><button class="button secondary" data-action="refresh-dashboard">刷新</button></div>
+      <div class="cards" id="runtime-cards"></div>
+      <div class="two-column">
+        <article class="panel"><div class="panel-title"><h3>MT4 Account status</h3><span class="muted">进程与配置检查</span></div><div id="dashboard-accounts" class="table-wrap"></div></article>
+        <article class="panel"><div class="panel-title"><h3>最近登录结果</h3><button class="link-button" data-tab-link="history">查看全部</button></div><div id="dashboard-history" class="table-wrap"></div></article>
+      </div>
+    </section>
+
+    <section id="accounts" class="page">
+      <div class="section-heading"><div><p class="eyebrow">LOCAL CATALOG</p><h2>Accounts</h2><p class="muted">Login ID 和路径只保存在本机数据目录，不会从 Slack 接收。</p></div><button class="button" data-action="new-account">新增 Account</button></div>
+      <div id="account-editor" class="editor hidden">
+        <h3 id="account-editor-title">新增 Account</h3>
+        <form id="account-form" class="form-grid">
+          <input type="hidden" id="account-id">
+          <label>Name<input id="account-display-name" required maxlength="100" placeholder="Rakuten-A"></label>
+          <label>Alias<input id="account-alias" required maxlength="64" placeholder="A"></label>
+          <label>Login ID<input id="account-login-id" required maxlength="128" autocomplete="off"></label>
+          <label>Server<input id="account-server" required maxlength="128" placeholder="RakutenMT4"></label>
+          <label class="wide">MT4 executable path<input id="account-terminal-path" required maxlength="1024" placeholder="C:\\Program Files\\Rakuten\\terminal.exe"></label>
+          <label>Process name (optional)<input id="account-process-name" maxlength="128" placeholder="terminal.exe"></label>
+          <label>Profile path (required on Windows for instance disambiguation)<input id="account-profile-path" maxlength="1024" placeholder="C:\\RakutenProfiles\\A"></label>
+          <label>Login window title regex (required on Windows)<input id="account-window-regex" maxlength="256" placeholder="(?i)^.*login.*$"></label>
+          <label>Authenticated main-window title regex (anchored; required for verified Windows success)<input id="account-success-window-regex" maxlength="256" placeholder="^Rakuten .* authenticated$"></label>
+          <label>Launch arguments (JSON array)<input id="account-launch-args" placeholder='["/portable"]'></label>
+          <label class="checkbox"><input id="account-enabled" type="checkbox" checked> Enabled</label>
+          <label class="checkbox"><input id="account-save-login" type="checkbox"> Save login information when UI provides it (off by default)</label>
+          <label class="wide">UIA control IDs (required on Windows)<textarea id="account-control-ids" rows="2" placeholder='{"login_id":"loginIdEdit","otp":"passwordEdit","server":"serverCombo","login_button":"loginButton"}'></textarea></label>
+          <label class="wide">UIA control titles (non-critical fields; Login/OTP/Server/Login require IDs)<textarea id="account-control-titles" rows="2" placeholder='{"save_login":"Save login"}'></textarea></label>
+          <div class="form-actions wide"><button type="button" class="button secondary" data-action="cancel-account">取消</button><button type="submit" class="button">保存 Account</button></div>
+        </form>
+      </div>
+      <div id="accounts-table" class="panel table-wrap"></div>
+    </section>
+
+    <section id="groups" class="page">
+      <div class="section-heading"><div><p class="eyebrow">ORDERED EXECUTION</p><h2>Groups</h2><p class="muted">Group 内的账号按列表顺序依次登录；部分失败不会中断其余账号。</p></div><button class="button" data-action="new-group">新增 Group</button></div>
+      <div id="group-editor" class="editor hidden">
+        <h3 id="group-editor-title">新增 Group</h3>
+        <form id="group-form" class="form-grid">
+          <input type="hidden" id="group-id">
+          <label>Name<input id="group-name" required maxlength="64" placeholder="GROUP1"></label>
+          <label class="checkbox"><input id="group-enabled" type="checkbox" checked> Enabled</label>
+          <label class="wide">Members (order matters)<select id="group-members" multiple size="8"></select></label>
+          <div class="form-actions wide"><button type="button" class="button secondary" data-action="cancel-group">取消</button><button type="submit" class="button">保存 Group</button></div>
+        </form>
+      </div>
+      <div id="groups-list" class="group-list"></div>
+    </section>
+
+    <section id="slack" class="page">
+      <div class="section-heading"><div><p class="eyebrow">COMMAND CHANNEL</p><h2>Slack Socket Mode</h2><p class="muted">Token 只写入本机 secrets 文件，页面不会回显原值。</p></div><button class="button secondary" data-action="test-slack">Connection Test</button></div>
+      <div class="panel form-panel">
+        <div id="slack-status" class="status-banner"></div>
+        <form id="slack-form" class="form-grid">
+          <label class="checkbox"><input id="slack-enabled" type="checkbox" checked> Enable Slack Socket Mode</label>
+          <label>App-level token<input id="slack-app-token" type="password" autocomplete="new-password" placeholder="已配置时留空保持不变"></label>
+          <label>Bot token<input id="slack-bot-token" type="password" autocomplete="new-password" placeholder="已配置时留空保持不变"></label>
+          <label class="checkbox"><input id="clear-app-token" type="checkbox"> 清除已保存的 App-level token</label>
+          <label class="checkbox"><input id="clear-bot-token" type="checkbox"> 清除已保存的 Bot token</label>
+          <label class="wide">Allowed Slack User IDs（每行一个；在 Slack 个人资料中查看 Member ID）<textarea id="slack-users" rows="5" placeholder="U0123456789"></textarea></label>
+          <div class="wide token-boundary">网络边界：此 Agent 只需要连接 Slack 官方 Socket Mode/API；MT4 使用其原有网络连接。没有 telemetry、analytics 或 AI API。</div>
+          <div class="form-actions wide"><button type="submit" class="button">保存并重连</button></div>
+        </form>
+      </div>
+      <article class="panel help-panel"><h3>Slack 命令</h3><pre>/mt4 A 123456
+/mt4 GROUP1 123456
+/mt4 status</pre><p class="muted">只有 Allowed Slack User IDs 中的 User ID 可以执行登录。未授权请求会在解析 OTP 前拒绝。</p></article>
+    </section>
+
+    <section id="history" class="page">
+      <div class="section-heading"><div><p class="eyebrow">AUDIT TRAIL</p><h2>History</h2><p class="muted">只记录安全审计字段：时间、sender、target、结果、错误分类、耗时。OTP 永远不会出现在这里。</p></div><button class="button secondary" data-action="refresh-history">刷新</button></div>
+      <div id="history-table" class="panel table-wrap"></div>
+    </section>
+  </main>
+  <div id="toast" class="toast" role="status"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

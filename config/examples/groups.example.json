@@ -1,0 +1,8 @@
+[
+  {
+    "id": "example-group-1",
+    "name": "GROUP1",
+    "account_ids": ["example-account-a"],
+    "enabled": true
+  }
+]

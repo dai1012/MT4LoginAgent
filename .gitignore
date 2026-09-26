@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local runtime data and secrets
+.env
+.env.*
+*.log
+/data/
+/.local-data/
+/.runtime-data/
+/runtime-data/
+# Runtime files may be placed in a custom data directory inside the worktree.
+**/secrets.json
+**/accounts.json
+**/groups.json
+**/settings.json
+**/history.jsonl
+**/dedup.json
+**/agent.lock
+**/logs/
+**/*.tmp
+**/*.bak
+**/*.swp
+**/*.swo
+*~
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

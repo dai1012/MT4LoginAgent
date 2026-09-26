@@ -1,0 +1,30 @@
+---
+# Rakuten MT4 Remote Login Agent V1
+# Socket Mode does not need a public Request URL. The slash command intentionally
+# omits `url`; Slack routes it over the WebSocket while socket_mode_enabled is true.
+_metadata:
+  major_version: 1
+  minor_version: 1
+display_information:
+  name: Rakuten MT4 Remote Login Agent
+  description: Local Windows agent for authorized Rakuten MT4 login automation
+  background_color: "#0B1020"
+features:
+  bot_user:
+    display_name: MT4 Login Agent
+    always_online: false
+  slash_commands:
+    - command: /mt4
+      description: Login to a configured Rakuten MT4 account or group
+      usage_hint: "/mt4 <alias-or-group> <OTP> | /mt4 status"
+      should_escape: false
+oauth_config:
+  scopes:
+    bot:
+      - commands
+      - chat:write
+settings:
+  socket_mode_enabled: true
+  org_deploy_enabled: false
+  is_hosted: false
+  token_rotation_enabled: false

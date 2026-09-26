@@ -1,0 +1,8 @@
+{
+  "allowed_slack_user_ids": [
+    "U0123456789"
+  ],
+  "slack_enabled": true,
+  "automation_mode": "auto",
+  "web_port": 8765
+}
