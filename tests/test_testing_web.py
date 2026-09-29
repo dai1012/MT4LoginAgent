@@ -1,6 +1,32 @@
 from __future__ import annotations
 
 
+def test_step_cards_do_not_warn_on_manual_and_report_a_manual_count(client):
+    """A manual or optional check must be counted, not painted as a degradation."""
+    script = client.get("/static/app.js").text
+    page = client.get("/")
+    assert page.status_code == 200
+
+    # The manual count is a separate piece of information from the verdict.
+    assert "phase_manual" in script
+    assert "manualCount" in script
+    assert "manual confirmation remaining" in script
+    assert "manual checks remaining" in script
+
+    # No branch may map a usable step onto WARN just because the verdict is not
+    # exactly "pass"; MANUAL used to land there.
+    assert 'step.verdict === "warn"' in script
+    assert 'step.verdict === "pass" ? badge("PASS") : badge("WARN")' not in script
+
+    # A step that ran without a recorded verdict is READY, not a failure.
+    assert 'badge("READY")' in script
+    assert 'mark = badge(step.verdict === "pass" ? "PASS" : "WARN")' not in script
+
+    # Real warnings and failures are still shown.
+    assert 'badge("FAIL")' in script
+    assert 'badge("WARN")' in script
+
+
 def test_windows_test_page_keeps_step_wizard_and_manual_guards(client):
     page = client.get("/")
     assert page.status_code == 200

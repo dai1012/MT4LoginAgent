@@ -61,6 +61,7 @@ class TestRunner:
         self._started_at = now_utc()
         self._completed_phases: set[TestPhase] = set()
         self._phase_status: dict[TestPhase, str] = {}
+        self._phase_manual: dict[TestPhase, int] = {}
         self._discovery_route: str = ""
         self._security_scan: dict[str, bool] = {}
         self._slack_sessions: dict[str, tuple[str, Any]] = {}
@@ -92,6 +93,9 @@ class TestRunner:
             "phase_status": {
                 phase.value: value for phase, value in self._phase_status.items()
             },
+            "phase_manual": {
+                phase.value: value for phase, value in self._phase_manual.items()
+            },
             "discovery_route": self._discovery_route,
             "results": [item.safe_dict() for item in self._results],
             "detected_controls": [item.model_dump(mode="json") for item in self._detected_controls],
@@ -99,18 +103,51 @@ class TestRunner:
 
     @staticmethod
     def _verdict(results: list[TestResult]) -> str:
-        """Summarise a phase from its real results, not from the fact it ran."""
+        """Summarise a phase from its real results, not from the fact it ran.
+
+        Only the latest occurrence of each check id counts. Results accumulate for
+        the life of the process, so an earlier FAIL for the same check must not keep
+        a later PASS looking broken.
+        """
         if not results:
             return "not_run"
-        if any(item.status == TestStatus.FAIL for item in results):
+        latest: dict[str, TestStatus] = {}
+        for item in results:
+            latest[item.id] = item.status
+        statuses = list(latest.values())
+        if any(status == TestStatus.FAIL for status in statuses):
             return "fail"
-        if all(item.status == TestStatus.PASS for item in results):
-            return "pass"
-        return "warn"
+        if any(status == TestStatus.WARN for status in statuses):
+            return "warn"
+        # MANUAL and NOT_RUN are not degradations. A step that left a checklist or a
+        # destructive probe for the human to decide has still done its job, and
+        # colouring the whole step amber misreports that as a problem.
+        return "pass"
+
+    @staticmethod
+    def _manual_count(results: list[TestResult]) -> int:
+        """How many checks the human still has to decide, per check id."""
+        latest: dict[str, TestStatus] = {}
+        for item in results:
+            latest[item.id] = item.status
+        return sum(1 for status in latest.values() if status == TestStatus.MANUAL)
 
     def _record_phase(self, phase: TestPhase, results: list[TestResult]) -> None:
         self._completed_phases.add(phase)
-        self._phase_status[phase] = self._verdict(results)
+        verdict = self._verdict(results)
+        if phase is TestPhase.DISCOVERY and self._discovery_route in {"uia", "win32"}:
+            # This phase exists to find a route that can drive MT4. A broker whose
+            # login form is not exposed to UIA can never satisfy the UIA check, so
+            # the warning on the primary route is not a degradation of the step once
+            # the opted-in alternative resolved. The individual row keeps its own
+            # WARN so nothing is rewritten; only the step summary is decided here.
+            ready = next(
+                (item for item in results if item.id == "MT4_DISCOVERY_READY"), None
+            )
+            if ready is not None and ready.status == TestStatus.PASS:
+                verdict = "pass"
+        self._phase_status[phase] = verdict
+        self._phase_manual[phase] = self._manual_count(results)
 
     def _discovery_usable(self) -> bool:
         """Phase 2 may continue when a reliable control route exists.
@@ -472,7 +509,7 @@ class TestRunner:
             )
             results.extend(leak_results)
             self._add(results)
-            self._completed_phases.add(TestPhase.REAL_LOGIN)
+            self._record_phase(TestPhase.REAL_LOGIN, results)
             await self._write(otp=otp, uia_payload=self._diagnostic or None)
             return results
 

@@ -110,13 +110,23 @@
   function testStepState(data) {
     const done = new Set((data && data.completed_phases) || []);
     const verdicts = (data && data.phase_status) || {};
+    const manual = (data && data.phase_manual) || {};
     const route = (data && data.discovery_route) || "";
     return TEST_STEPS.map((step) => {
       const ran = done.has(step.key);
       const verdict = verdicts[step.key] || "not_run";
+      const manualCount = manual[step.key] || 0;
       const usable = ran && (step.key !== "discovery" || route === "uia" || route === "win32");
-      return { ...step, ran, verdict, usable, route };
+      return { ...step, ran, verdict, manualCount, usable, route };
     });
+  }
+  // A manual or optional check is something the human still has to decide, not a
+  // degradation. It is reported as a count so the step card is not painted amber.
+  function manualNote(step) {
+    if (!step.manualCount) return "";
+    return step.manualCount === 1
+      ? "1 manual confirmation remaining"
+      : `${step.manualCount} manual checks remaining`;
   }
   function missingSteps(steps, keys) { return keys.filter((key) => !(steps.find((s) => s.key === key) || {}).usable); }
   function stepLabels(steps, keys) { return keys.map((key) => (steps.find((s) => s.key === key) || {}).label || key).join(" 和 "); }
@@ -136,9 +146,12 @@
     const currentIndex = steps.findIndex((s) => !s.usable);
     if (bar) bar.innerHTML = steps.map((step, index) => {
       const missing = missingSteps(steps, step.requires);
+      const note = manualNote(step);
       let stateText; let mark;
       if (step.usable && step.verdict === "fail") { stateText = "已运行但有失败"; mark = badge("FAIL"); }
-      else if (step.usable) { stateText = step.verdict === "pass" ? "已通过" : "已完成（有提示）"; mark = badge(step.verdict === "pass" ? "PASS" : "WARN"); }
+      else if (step.usable && step.verdict === "warn") { stateText = "有真实告警，流程仍可继续"; mark = badge("WARN"); }
+      else if (step.usable && step.verdict === "pass") { stateText = note ? `已通过 · ${note}` : "已通过"; mark = badge("PASS"); }
+      else if (step.usable) { stateText = note || "已运行"; mark = badge("READY"); }
       else if (step.ran) { stateText = "已运行，但未解析出可用路径"; mark = badge("WARN"); }
       else if (missing.length) { stateText = `待完成 ${stepLabels(steps, missing)}`; mark = index === currentIndex ? badge("WARN") : `<span class="muted">未开始</span>`; }
       else { stateText = "当前可执行"; mark = badge("WARN"); }
