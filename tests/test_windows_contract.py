@@ -419,3 +419,38 @@ def test_worker_redacts_otp_inside_fresh_spawn_context(monkeypatch):
     monkeypatch.setattr(windows_module, "WindowsAutomation", FakeAutomation)
     _windows_login_worker(Sender(), make_account(), "1234")
     assert sent[0]["status"] == "success"
+
+
+def test_success_window_state_is_scoped_to_the_account_own_pids():
+    """Two running instances must not let one Account see the other's success window.
+
+    MetaTrader's multi-account guidance puts each account in its own terminal
+    installation, so A and B resolve to different PIDs. If the success state were
+    global, B's authenticated window could satisfy A's verification.
+    """
+    adapter = object.__new__(WindowsAutomation)
+    account = make_account(success_window_title_regex="Rakuten")
+    windows = {
+        1111: FakeMainWindow("Rakuten A authenticated"),
+        2222: FakeMainWindow("Rakuten B authenticated"),
+        3333: FakeMainWindow("Unrelated window"),
+    }
+    queried: list[list[int]] = []
+
+    def fake_windows(pids):
+        queried.append(list(pids))
+        return [windows[pid] for pid in pids]
+
+    adapter._windows = fake_windows
+    state = adapter._success_window_state([2222], account)
+    assert queried == [[2222]], "only the Account's own PID may be queried"
+    titles = list(state.values())
+    assert titles == ["Rakuten B authenticated"]
+    assert not any("Rakuten A" in title for title in titles)
+
+
+def test_success_window_state_returns_nothing_for_a_pid_with_no_match():
+    adapter = object.__new__(WindowsAutomation)
+    account = make_account(success_window_title_regex="^Rakuten")
+    adapter._windows = lambda pids: [FakeMainWindow("some other window")]
+    assert adapter._success_window_state([1111], account) == {}

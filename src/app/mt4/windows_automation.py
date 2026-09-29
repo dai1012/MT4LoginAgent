@@ -51,6 +51,18 @@ _FAILURE_WORDS = (
 )
 _MAIN_WINDOW_WORDS = ("metatrader", "mt4", "取引")
 
+# Menu captions that open the MT4 login dialog. Compared after normalisation, and
+# matched exactly so that zero or several matches both refuse to act.
+_MENU_LOGIN_CAPTIONS = frozenset(
+    {
+        "取引口座にログイン",  # MT4 standard Japanese
+        "login to trade account",  # English
+    }
+)
+_WM_COMMAND = 0x0111
+_MF_BYPOSITION = 0x0400
+_SMTO_ABORTIFHUNG = 0x0002
+
 
 class WindowsAutomationError(Exception):
     def __init__(self, category: ErrorCategory, message: str) -> None:
@@ -261,7 +273,15 @@ class WindowsAutomation:
             login_window = self._find_login_window(pids, account)
             win32_controls: dict[str, Any] = {}
             use_win32 = False
+            auto_open_detail = ""
             if login_window is None:
+                if account.win32_fallback.enabled:
+                    # Opening the dialog here is safe: it happens before any
+                    # credential reaches the form, so a failure cannot consume one.
+                    # The command only ever reaches this Account's own main window.
+                    outcome, detail = self._win32_open_login_dialog(pids, account)
+                    if outcome not in {"already_open", "opened"}:
+                        auto_open_detail = f"auto-open {outcome}: {detail}"
                 # UIA is primary. The native dialog is only considered when the
                 # Account explicitly opted in and every Win32 precondition holds.
                 dialog = self._win32_dialog(pids, account)
@@ -270,14 +290,15 @@ class WindowsAutomation:
                     if self._win32_usable(win32_controls):
                         login_window, use_win32 = dialog, True
             if login_window is None:
+                suffix = f" ({auto_open_detail})" if auto_open_detail else ""
                 if self._has_main_window(pids):
                     raise WindowsAutomationError(
                         ErrorCategory.ALREADY_RUNNING_NO_LOGIN_WINDOW,
-                        "MT4 is running but its login window was not found",
+                        "MT4 is running but its login window was not found" + suffix,
                     )
                 raise WindowsAutomationError(
                     ErrorCategory.UI_CONTROL_NOT_FOUND,
-                    "MT4 login window was not found before timeout",
+                    "MT4 login window was not found before timeout" + suffix,
                 )
 
             if use_win32:
@@ -509,6 +530,163 @@ class WindowsAutomation:
         callback = enum_proc(collect)
         user32.EnumWindows(callback, 0)
         return rows
+
+    @staticmethod
+    def _normalize_menu_caption(text: str) -> str:
+        """Normalise a Win32 menu caption for comparison.
+
+        Menu text carries an ampersand accelerator marker and usually ends with a
+        tab-separated shortcut hint, both of which are decoration rather than the
+        command's identity. A trailing "(L)" accelerator hint is dropped for the
+        same reason.
+        """
+        cleaned = (text or "").replace("&", "")
+        cleaned = cleaned.split("\t", 1)[0]
+        cleaned = re.sub(r"\([^()]{1,3}\)\s*$", "", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned)
+        return cleaned.strip().casefold()
+
+    @staticmethod
+    def _win32_menu_commands(hwnd: int) -> list[tuple[int, str]]:
+        """Walk the window's menu hierarchy and return (command_id, caption) pairs.
+
+        Command ids are resolved at runtime from the menu itself, so no id is ever
+        hard-coded. A depth bound keeps a malformed or cyclic menu from looping.
+        """
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        for function, argtypes, restype in (
+            (user32.GetMenu, [wintypes.HWND], wintypes.HANDLE),
+            (user32.GetSubMenu, [wintypes.HANDLE, ctypes.c_int], wintypes.HANDLE),
+            (user32.GetMenuItemCount, [wintypes.HANDLE], ctypes.c_int),
+            (
+                user32.GetMenuStringW,
+                [
+                    wintypes.HANDLE,
+                    wintypes.UINT,
+                    wintypes.LPWSTR,
+                    ctypes.c_int,
+                    wintypes.UINT,
+                ],
+                ctypes.c_int,
+            ),
+            (user32.GetMenuItemID, [wintypes.HANDLE, ctypes.c_int], wintypes.UINT),
+        ):
+            function.argtypes = argtypes
+            function.restype = restype
+
+        root = user32.GetMenu(hwnd)
+        if not root:
+            return []
+        found: list[tuple[int, str]] = []
+
+        def walk(menu: Any, depth: int) -> None:
+            if depth > 6:
+                return
+            for index in range(user32.GetMenuItemCount(menu)):
+                buffer = ctypes.create_unicode_buffer(512)
+                user32.GetMenuStringW(menu, index, buffer, 512, _MF_BYPOSITION)
+                caption = buffer.value
+                submenu = user32.GetSubMenu(menu, index)
+                if submenu:
+                    walk(submenu, depth + 1)
+                    continue
+                command_id = user32.GetMenuItemID(menu, index)
+                # 0xFFFFFFFF marks a separator or a popup, not a command.
+                if command_id and command_id != 0xFFFFFFFF and caption:
+                    found.append((int(command_id), caption))
+
+        walk(root, 0)
+        return found
+
+    def _win32_main_window(
+        self, pids: list[int], account: AccountConfig
+    ) -> tuple[int | None, str]:
+        """Locate the single native MT4 main window of the resolved process.
+
+        The login dialog also carries words such as "MetaTrader" in its title, so
+        the window class is the discriminator: an MT4 main window is a MetaQuotes
+        class while the login dialog is a plain dialog class. Ambiguity refuses to
+        choose, so one Account can never open a dialog on another instance.
+        """
+        expected = set(pids)
+        if len(expected) != 1:
+            return None, f"expected exactly one MT4 process, found {len(expected)}"
+        candidates = [
+            handle
+            for handle, pid, class_name, _title in self._enum_top_windows()
+            if pid in expected and class_name.startswith("MetaQuotes")
+        ]
+        if not candidates:
+            return None, "no MT4 main window was found for the resolved process"
+        if len(candidates) > 1:
+            return None, f"{len(candidates)} MT4 main windows matched; refusing to choose"
+        return candidates[0], "one MT4 main window matched"
+
+    def _win32_login_menu_command(self, hwnd: int) -> tuple[int | None, str]:
+        """Resolve the single login-to-trade command id from the window's own menu."""
+        matches = [
+            command_id
+            for command_id, caption in self._win32_menu_commands(hwnd)
+            if self._normalize_menu_caption(caption) in _MENU_LOGIN_CAPTIONS
+        ]
+        if not matches:
+            return None, "no login menu command matched the expected captions"
+        if len(matches) > 1:
+            return None, f"{len(matches)} login menu commands matched; refusing to choose"
+        return matches[0], "one login menu command matched"
+
+    @staticmethod
+    def _win32_send_command(hwnd: int, command_id: int, timeout_ms: int = 5000) -> bool:
+        """Send a menu command to a window with a bounded, non-blocking wait."""
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        result = ctypes.c_size_t()
+        return bool(
+            user32.SendMessageTimeoutW(
+                hwnd,
+                _WM_COMMAND,
+                wintypes.WPARAM(command_id),
+                0,
+                _SMTO_ABORTIFHUNG,
+                timeout_ms,
+                ctypes.byref(result),
+            )
+        )
+
+    def _win32_open_login_dialog(
+        self, pids: list[int], account: AccountConfig, *, wait_seconds: float = 8.0
+    ) -> tuple[str, str]:
+        """Open the MT4 login dialog through the window's own menu.
+
+        Only used for an Account that opted into the Win32 dialog fallback. No
+        coordinate is used and no key is sent: the command id is resolved from the
+        menu hierarchy at runtime and must be unique, and the message goes only to
+        the main window of the process this Account resolved to. The credential is
+        not involved at any point, so a failure here cannot consume one.
+        """
+        if not account.win32_fallback.enabled:
+            return "not_enabled", "the Win32 dialog fallback is not enabled for this Account"
+        if self._win32_dialog(pids, account) is not None:
+            return "already_open", "the login dialog was already present"
+        hwnd, detail = self._win32_main_window(pids, account)
+        if hwnd is None:
+            return "unavailable", detail
+        command_id, detail = self._win32_login_menu_command(hwnd)
+        if command_id is None:
+            return "unavailable", detail
+        if not self._win32_send_command(hwnd, command_id):
+            return "unavailable", "the window did not accept the menu command"
+        deadline = time.monotonic() + wait_seconds
+        while time.monotonic() < deadline:
+            if self._win32_dialog(pids, account) is not None:
+                return "opened", "the login dialog appeared after the menu command"
+            time.sleep(0.25)
+        return "timeout", "the login dialog did not appear before the bounded wait"
 
     @staticmethod
     def _win32_wrap(handle: int) -> Any | None:

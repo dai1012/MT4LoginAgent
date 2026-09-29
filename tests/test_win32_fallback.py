@@ -18,6 +18,7 @@ import pytest
 
 from app.models.domain import AccountConfig, ErrorCategory, LoginStatus
 from app.mt4.windows_automation import WindowsAutomation
+from app.testing.models import TestStatus
 from tests.support import account_values
 
 SECRET_OTP = "918273"
@@ -141,7 +142,16 @@ def make_adapter(dialog=None, *, pid=27784, pids=None, class_name="#32770",
     adapter._enum_top_windows = lambda: [(332886, pid, class_name, title)]
     adapter._win32_wrap = lambda handle: dialog if wrap_ok else None
     adapter._pids = pids if pids is not None else [pid]
+    adapter._win32_open_login_dialog = lambda _pids, _account: (
+        "already_open",
+        "the login dialog was already present",
+    )
     return adapter
+
+
+def _pick(results, identifier):
+    """Return the result with this id from a discovery result list."""
+    return next(item for item in results if item.id == identifier)
 
 
 # (a) UIA primary must never reach the Win32 route.
@@ -343,7 +353,8 @@ def test_discovery_reports_win32_failure_without_leaking_values():
     dialog, _parts = build_dialog(duplicate_otp=True)
     adapter = make_adapter(dialog)
     account = make_account()
-    result, found = _win32_discovery(adapter, account, [27784])
+    results, found = _win32_discovery(adapter, account, [27784])
+    result = _pick(results, "WIN32_DIALOG_DISCOVERY")
     assert found is False
     assert result.id == "WIN32_DIALOG_DISCOVERY"
     assert SECRET_OTP not in result.message
@@ -356,7 +367,8 @@ def test_discovery_reports_win32_success():
     dialog, _parts = build_dialog()
     adapter = make_adapter(dialog)
     account = make_account()
-    result, found = _win32_discovery(adapter, account, [27784])
+    results, found = _win32_discovery(adapter, account, [27784])
+    result = _pick(results, "WIN32_DIALOG_DISCOVERY")
     assert found is True
     assert result.id == "WIN32_DIALOG_DISCOVERY"
     assert "login_id" in result.technical_detail
@@ -485,7 +497,8 @@ def test_discovery_keeps_a_programming_fault_visible(monkeypatch):
         raise ctypes.ArgumentError(1, "TypeError")
 
     adapter._win32_dialog = boom
-    result, found = _win32_discovery(adapter, make_account(), [27784])
+    results, found = _win32_discovery(adapter, make_account(), [27784])
+    result = _pick(results, "WIN32_DIALOG_DISCOVERY")
     assert found is False
     assert result.id == "WIN32_DIALOG_DISCOVERY"
     assert "ArgumentError" in result.technical_detail
@@ -498,7 +511,256 @@ def test_discovery_stays_quiet_when_the_dialog_simply_is_not_there(monkeypatch):
     _install_fake_user32(monkeypatch, WINDOWS)
     dialog, _parts = build_dialog()
     adapter = make_adapter(dialog)
-    result, found = _win32_discovery(adapter, make_account(), [1])
+    results, found = _win32_discovery(adapter, make_account(), [1])
+    result = _pick(results, "WIN32_DIALOG_DISCOVERY")
     assert found is False
     assert "ArgumentError" not in result.technical_detail
     assert result.technical_detail.endswith("the dialog was not usable")
+
+
+# --- Auto-opening the login dialog through the window's own menu -----------------
+
+MAIN_CLASS = "MetaQuotes::MetaTrader::4.00"
+
+
+def _main_row(handle: int, pid: int) -> tuple:
+    return (handle, pid, MAIN_CLASS, "RakutenSecurities-Demo - Rakuten Securities, Inc.")
+
+
+def _open_harness(
+    *,
+    dialog_present=False,
+    top_windows=(),
+    menu=(),
+    send_ok=True,
+    dialog_appears_after_send=False,
+):
+    automation = object.__new__(WindowsAutomation)
+    sent: list[tuple[int, int]] = []
+    state = {"present": dialog_present}
+
+    def fake_dialog(_pids, _account):
+        return object() if state["present"] else None
+
+    def fake_enum():
+        return list(top_windows)
+
+    def fake_menu(_hwnd):
+        return list(menu)
+
+    def fake_send(hwnd, command_id, timeout_ms=5000):
+        sent.append((hwnd, command_id))
+        if send_ok and dialog_appears_after_send:
+            state["present"] = True
+        return send_ok
+
+    automation._win32_dialog = fake_dialog
+    automation._enum_top_windows = fake_enum
+    automation._win32_menu_commands = fake_menu
+    automation._win32_send_command = staticmethod(fake_send)
+    return automation, sent, state
+
+
+def test_dialog_already_open_never_sends_a_command():
+    automation, sent, _state = _open_harness(
+        dialog_present=True,
+        top_windows=[_main_row(66762, 27784)],
+        menu=[(40012, "取引口座にログイン")],
+    )
+    outcome, _detail = automation._win32_open_login_dialog([27784], make_account())
+    assert outcome == "already_open"
+    assert sent == []
+
+
+def test_missing_dialog_with_one_menu_item_sends_to_the_right_window():
+    automation, sent, _state = _open_harness(
+        top_windows=[_main_row(66762, 27784)],
+        menu=[(40011, "新規注文"), (40012, "取引口座にログイン")],
+        dialog_appears_after_send=True,
+    )
+    outcome, _detail = automation._win32_open_login_dialog(
+        [27784], make_account(), wait_seconds=1.0
+    )
+    assert outcome == "opened"
+    assert sent == [(66762, 40012)]
+
+
+def test_english_caption_is_accepted():
+    automation, sent, _state = _open_harness(
+        top_windows=[_main_row(66762, 27784)],
+        menu=[(40012, "Login to Trade Account")],
+        dialog_appears_after_send=True,
+    )
+    outcome, _detail = automation._win32_open_login_dialog(
+        [27784], make_account(), wait_seconds=1.0
+    )
+    assert outcome == "opened"
+    assert sent == [(66762, 40012)]
+
+
+@pytest.mark.parametrize(
+    ("caption", "expected"),
+    [
+        ("取引口座にログイン", "取引口座にログイン"),
+        ("取引口座にログイン(&L)", "取引口座にログイン"),
+        ("取引口座にログイン\tCtrl+L", "取引口座にログイン"),
+        ("Login to Trade Account(&L)", "login to trade account"),
+        ("  Login   to  Trade  Account  ", "login to trade account"),
+        ("&新規注文", "新規注文"),
+    ],
+)
+def test_menu_caption_normalisation(caption, expected):
+    assert WindowsAutomation._normalize_menu_caption(caption) == expected
+
+
+def test_no_matching_menu_item_fails_closed_without_sending():
+    automation, sent, _state = _open_harness(
+        top_windows=[_main_row(66762, 27784)],
+        menu=[(40011, "新規注文"), (40013, " shuts down ")],
+    )
+    outcome, detail = automation._win32_open_login_dialog([27784], make_account())
+    assert outcome == "unavailable"
+    assert "no login menu command matched" in detail
+    assert sent == []
+
+
+def test_multiple_matching_menu_items_fail_closed_without_sending():
+    automation, sent, _state = _open_harness(
+        top_windows=[_main_row(66762, 27784)],
+        menu=[(40012, "取引口座にログイン"), (40099, "Login to Trade Account")],
+    )
+    outcome, detail = automation._win32_open_login_dialog([27784], make_account())
+    assert outcome == "unavailable"
+    assert "refusing to choose" in detail
+    assert sent == []
+
+
+@pytest.mark.parametrize("pids", [(), (27784, 27785), (11111,)])
+def test_ambiguous_or_missing_pid_fails_closed_without_sending(pids):
+    """Two instances running must never make one Account act on the other."""
+    automation, sent, _state = _open_harness(
+        top_windows=[_main_row(66762, 27784), _main_row(66763, 27785)],
+        menu=[(40012, "取引口座にログイン")],
+    )
+    outcome, _detail = automation._win32_open_login_dialog(list(pids), make_account())
+    assert outcome == "unavailable"
+    assert sent == []
+
+
+def test_ambiguous_main_window_for_one_pid_fails_closed():
+    automation, sent, _state = _open_harness(
+        top_windows=[_main_row(66762, 27784), _main_row(66799, 27784)],
+        menu=[(40012, "取引口座にログイン")],
+    )
+    outcome, detail = automation._win32_open_login_dialog([27784], make_account())
+    assert outcome == "unavailable"
+    assert "main windows matched" in detail
+    assert sent == []
+
+
+def test_only_the_account_own_pid_window_receives_the_command():
+    automation, sent, _state = _open_harness(
+        top_windows=[_main_row(66762, 27784), _main_row(66763, 27785)],
+        menu=[(40012, "取引口座にログイン")],
+        dialog_appears_after_send=True,
+    )
+    outcome, _detail = automation._win32_open_login_dialog(
+        [27784], make_account(), wait_seconds=1.0
+    )
+    assert outcome == "opened"
+    # Only the 27784 window was addressed; 27785 was never touched.
+    assert sent == [(66762, 40012)]
+
+
+def test_dialog_timeout_fails_closed():
+    automation, sent, _state = _open_harness(
+        top_windows=[_main_row(66762, 27784)],
+        menu=[(40012, "取引口座にログイン")],
+        dialog_appears_after_send=False,
+    )
+    outcome, detail = automation._win32_open_login_dialog(
+        [27784], make_account(), wait_seconds=0
+    )
+    assert outcome == "timeout"
+    assert "did not appear" in detail
+    assert sent == [(66762, 40012)]
+
+
+def test_window_rejecting_the_command_fails_closed():
+    automation, sent, _state = _open_harness(
+        top_windows=[_main_row(66762, 27784)],
+        menu=[(40012, "取引口座にログイン")],
+        send_ok=False,
+    )
+    outcome, detail = automation._win32_open_login_dialog([27784], make_account())
+    assert outcome == "unavailable"
+    assert "did not accept" in detail
+    assert sent == [(66762, 40012)]
+
+
+def test_auto_open_is_skipped_when_the_fallback_is_not_enabled():
+    account = make_account(win32_fallback={"enabled": False})
+    automation, sent, _state = _open_harness()
+    outcome, _detail = automation._win32_open_login_dialog([27784], account)
+    assert outcome == "not_enabled"
+    assert sent == []
+
+
+def test_auto_open_detail_is_fixed_text_and_carries_no_input():
+    """The credential is not an input here, so no detail can echo one."""
+    for menu in ([], [(40012, "取引口座にログイン"), (40099, "Login to Trade Account")]):
+        automation, _sent, _state = _open_harness(
+            top_windows=[_main_row(66762, 27784)], menu=menu
+        )
+        _outcome, detail = automation._win32_open_login_dialog([27784], make_account())
+        assert detail and "{" not in detail and "%" not in detail
+
+
+def test_discovery_reports_auto_open_and_still_requires_resolved_controls():
+    from app.testing.mt4_discovery import _win32_discovery
+
+    adapter = make_adapter()
+    adapter._win32_open_login_dialog = lambda _p, _a: (
+        "opened",
+        "the login dialog appeared after the menu command",
+    )
+    adapter._win32_dialog = lambda _p, _a: object()
+    # The dialog is found but its controls do not resolve, so the route is unusable.
+    adapter._win32_controls = lambda _d, _a: {"login_id": None, "otp": None}
+    results, found = _win32_discovery(adapter, make_account(), [27784])
+    assert found is True
+    auto_open = _pick(results, "WIN32_DIALOG_AUTO_OPEN")
+    assert auto_open.status == TestStatus.PASS
+    assert "outcome=opened" in auto_open.technical_detail
+    assert _pick(results, "WIN32_DIALOG_DISCOVERY").status == TestStatus.PASS
+
+
+def test_discovery_reports_auto_open_failure_with_a_reason():
+    from app.testing.mt4_discovery import _win32_discovery
+
+    adapter = make_adapter(wrap_ok=False)
+    adapter._win32_open_login_dialog = lambda _p, _a: (
+        "unavailable",
+        "2 login menu commands matched; refusing to choose",
+    )
+    results, found = _win32_discovery(adapter, make_account(), [27784])
+    assert found is False
+    auto_open = _pick(results, "WIN32_DIALOG_AUTO_OPEN")
+    assert auto_open.status == TestStatus.WARN
+    assert "outcome=unavailable" in auto_open.technical_detail
+    assert "refusing to choose" in auto_open.technical_detail
+
+
+def test_discovery_reports_a_programming_fault_in_auto_open():
+    from app.testing.mt4_discovery import _win32_discovery
+
+    def boom(_p, _a):
+        raise RuntimeError("menu api missing")
+
+    adapter = make_adapter(wrap_ok=False)
+    adapter._win32_open_login_dialog = boom
+    results, _found = _win32_discovery(adapter, make_account(), [27784])
+    auto_open = _pick(results, "WIN32_DIALOG_AUTO_OPEN")
+    assert auto_open.status == TestStatus.WARN
+    assert "outcome=error" in auto_open.technical_detail
+    assert "RuntimeError" in auto_open.technical_detail

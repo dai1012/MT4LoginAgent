@@ -147,8 +147,45 @@ def _control_metadata(control: Any, account: AccountConfig) -> dict[str, Any]:
     }
 
 
-def _win32_discovery(adapter: Any, account: AccountConfig, pids: list[int]) -> tuple[Any, bool]:
-    """Report whether the opted-in Win32 login dialog and its ids are usable."""
+def _win32_discovery(
+    adapter: Any, account: AccountConfig, pids: list[int]
+) -> tuple[list[Any], bool]:
+    """Auto-open the login dialog if needed, then report dialog and control usability.
+
+    The auto-open step is safe here: it only sends the window's own menu command and
+    never touches the credential, which Phase 2 does not have. Returns the results to
+    append and whether a usable dialog route exists.
+    """
+    results: list[Any] = []
+    auto_open = "not_attempted"
+    auto_open_detail = "the Win32 dialog fallback is not enabled for this Account"
+    if account.win32_fallback.enabled:
+        try:
+            auto_open, auto_open_detail = adapter._win32_open_login_dialog(pids, account)
+        except Exception as exc:
+            # A programming or environment fault must stay visible rather than be
+            # reported as "the menu was not found".
+            auto_open = "error"
+            auto_open_detail = f"{type(exc).__name__}: {exc}"
+    opened = auto_open in {"already_open", "opened"}
+    results.append(
+        _result(
+            "WIN32_DIALOG_AUTO_OPEN",
+            "Win32 dialog auto-open",
+            TestStatus.PASS if opened else TestStatus.WARN,
+            "The login dialog was available without manual opening."
+            if opened
+            else "The login dialog could not be opened automatically.",
+            detail=f"outcome={auto_open}; {auto_open_detail}",
+            action=(
+                "Real Login will open the dialog itself when it is missing."
+                if opened
+                else "Open the login dialog from the MT4 window menu, then re-check. "
+                "Real Login still stops before typing anything."
+            ),
+            severity=TestSeverity.MEDIUM,
+        )
+    )
     error = ""
     try:
         dialog = adapter._win32_dialog(pids, account)
@@ -158,7 +195,7 @@ def _win32_discovery(adapter: Any, account: AccountConfig, pids: list[int]) -> t
         dialog = None
         error = f"{type(exc).__name__}: {exc}"
     if dialog is None:
-        return (
+        results.append(
             _result(
                 "WIN32_DIALOG_DISCOVERY",
                 "Win32 fallback dialog",
@@ -170,17 +207,17 @@ def _win32_discovery(adapter: Any, account: AccountConfig, pids: list[int]) -> t
                     if error
                     else "win32_fallback enabled but the dialog was not usable"
                 ),
-                action="Open the login dialog, then re-check dialog_class, anchors and ids.",
+                action="Re-check dialog_class, anchors and ids; auto-open reported above.",
                 severity=TestSeverity.HIGH,
-            ),
-            False,
+            )
         )
+        return results, False
     try:
         controls = adapter._win32_controls(dialog, account)
     except Exception:
         controls = {}
     resolved = sorted(key for key, value in controls.items() if value is not None)
-    return (
+    results.append(
         _result(
             "WIN32_DIALOG_DISCOVERY",
             "Win32 fallback dialog",
@@ -189,9 +226,9 @@ def _win32_discovery(adapter: Any, account: AccountConfig, pids: list[int]) -> t
             detail=",".join(resolved),
             action="Real Login will drive this dialog by native control id.",
             severity=TestSeverity.HIGH,
-        ),
-        True,
+        )
     )
+    return results, True
 
 
 def _collect_controls(
@@ -476,8 +513,8 @@ async def discover_account(account: AccountConfig, adapter: Any) -> DiscoveryOut
     )
     win32_dialog_found = False
     if account.win32_fallback.enabled:
-        win32_result, win32_dialog_found = _win32_discovery(adapter, account, pids)
-        outcome.results.append(win32_result)
+        win32_results, win32_dialog_found = _win32_discovery(adapter, account, pids)
+        outcome.results.extend(win32_results)
     outcome.route = "win32" if win32_dialog_found else ("uia" if uia_ready else "")
     outcome.results.append(
         _result(
