@@ -149,3 +149,40 @@ def test_manual_confirmations_and_backend_gates_survive_the_hardening(client):
     # The runner never sends an OTP on its own; the user types it and confirms.
     assert 'type: "text"' not in script
     assert 'id="test-otp" type="password"' in client.get("/").text
+
+
+def test_history_is_refreshed_after_actions_that_append_to_it(client):
+    script = client.get("/static/app.js").text
+    assert "async function loadHistory()" in script
+    for toast_text in (
+        "Real login test 已完成，结果见报告",
+        "Full Slack E2E 结果已记录",
+        "Group test 已完成，结果见报告",
+    ):
+        marker = f'toast("{toast_text}"); await loadHistory();'
+        assert marker in script, toast_text
+
+
+def test_history_tab_activation_refetches_on_demand(client):
+    script = client.get("/static/app.js").text
+    assert 'if (tab.dataset.tab === "history") loadHistory();' in script
+    assert 'if (link.dataset.tabLink === "history") loadHistory();' in script
+    assert 'else if (action === "refresh-history") { await loadHistory(); }' in script
+
+
+def test_history_refresh_is_on_demand_and_not_polled(client):
+    script = client.get("/static/app.js").text
+    assert "function loadHistory" in script
+    # The page already had a visibility-based dashboard refresh. History must stay
+    # on-demand: no interval or timer may reference the loader.
+    for banned in ("setHistoryInterval", "historyPoll", "setInterval", "setTimeout"):
+        for line in script.splitlines():
+            if banned in line:
+                assert "loadHistory" not in line, f"{banned} polls history: {line}"
+    assert script.count("function loadHistory") == 1
+
+
+def test_initial_page_load_uses_the_shared_history_loader(client):
+    script = client.get("/static/app.js").text
+    assert "await loadHistory(); } catch" in script
+    assert 'renderHistory(await api("/history?limit=500"), "#history-table");' in script

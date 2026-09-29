@@ -772,6 +772,21 @@ class WindowsAutomation:
                                 "configured verification",
                                 "authenticated_window_transition",
                             )
+                        # The main window can already carry the authenticated title
+                        # before this attempt, for example when an earlier session was
+                        # left open, so an unchanged title on its own proves nothing.
+                        # Requiring the login dialog to be gone while a window that
+                        # still matches the anchored success regex is present is
+                        # sufficient evidence. The regex keeps this fail-closed: when
+                        # nothing matches, the result stays unverified.
+                        if current_success_state:
+                            return (
+                                LoginStatus.SUCCESS,
+                                ErrorCategory.NONE,
+                                "Login dialog closed while a window matching the "
+                                "configured authenticated title was present",
+                                "authenticated_window_present_after_login_closed",
+                            )
             except Exception:
                 pass
             time.sleep(0.25)

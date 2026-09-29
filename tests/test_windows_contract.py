@@ -253,37 +253,94 @@ def test_windows_input_fallbacks_are_fail_closed():
         adapter._invoke(NoInvoke())
 
 
-def test_windows_success_requires_new_or_changed_authenticated_window(monkeypatch):
+def _run_wait(monkeypatch, adapter, login, account, before):
     ticks = iter([0.0, 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8])
     monkeypatch.setattr(windows_module.time, "monotonic", lambda: next(ticks, 100.0))
     monkeypatch.setattr(windows_module.time, "sleep", lambda _seconds: None)
+    return adapter._wait_for_result([1], login, account, before, {})
+
+
+def _wait_setup():
     adapter = object.__new__(WindowsAutomation)
     main = FakeMainWindow()
     adapter._windows = lambda _pids: [main]
+    adapter._psutil = None
+    return adapter, main
+
+
+def test_windows_success_accepts_unchanged_authenticated_window_after_login_closed(
+    monkeypatch,
+):
+    """The main window can already carry the authenticated title before the attempt.
+
+    An unchanged title on its own proves nothing, but the login dialog being gone
+    while an anchored authenticated window is still present is sufficient.
+    """
+    adapter, main = _wait_setup()
     login = SimpleNamespace(exists=lambda: False)
     account = make_account(success_window_title_regex="Rakuten")
     before = adapter._success_window_state([1], account)
-    status, category, _message, _verification = adapter._wait_for_result(
-        [1], login, account, before, {}
-    )
-    assert status == LoginStatus.FAILED
-    assert category == ErrorCategory.UI_VERIFICATION_UNVERIFIED
-
-    ticks = iter([0.0, 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8])
-    monkeypatch.setattr(windows_module.time, "monotonic", lambda: next(ticks, 100.0))
-    main.title = "Rakuten authenticated"
-    before = {"1:9": "Rakuten old"}
-    status, category, _message, verification = adapter._wait_for_result(
-        [1], login, account, before, {}
+    assert before, "the authenticated window must already exist for this case"
+    status, category, _message, verification = _run_wait(
+        monkeypatch, adapter, login, account, before
     )
     assert status == LoginStatus.SUCCESS
     assert category == ErrorCategory.NONE
-    ticks = iter([0.0, 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8])
-    monkeypatch.setattr(windows_module.time, "monotonic", lambda: next(ticks, 100.0))
-    status, category, _message, verification = adapter._wait_for_result([1], login, account, {}, {})
+    assert verification == "authenticated_window_present_after_login_closed"
+
+
+def test_windows_success_accepts_changed_authenticated_window_title(monkeypatch):
+    adapter, main = _wait_setup()
+    login = SimpleNamespace(exists=lambda: False)
+    account = make_account(success_window_title_regex="Rakuten")
+    main.title = "Rakuten authenticated"
+    before = {"1:9": "Rakuten old"}
+    status, category, _message, verification = _run_wait(
+        monkeypatch, adapter, login, account, before
+    )
     assert status == LoginStatus.SUCCESS
     assert category == ErrorCategory.NONE
     assert verification == "authenticated_window_transition"
+
+
+def test_windows_success_accepts_newly_appearing_authenticated_window(monkeypatch):
+    adapter, main = _wait_setup()
+    login = SimpleNamespace(exists=lambda: False)
+    account = make_account(success_window_title_regex="Rakuten")
+    status, category, _message, verification = _run_wait(
+        monkeypatch, adapter, login, account, {}
+    )
+    assert status == LoginStatus.SUCCESS
+    assert category == ErrorCategory.NONE
+    assert verification == "authenticated_window_transition"
+
+
+def test_windows_stays_unverified_when_login_closed_without_an_authenticated_window(
+    monkeypatch,
+):
+    """The presence rule must stay fail-closed when the regex matches nothing."""
+    adapter, main = _wait_setup()
+    main.title = "still the login dialog shell"
+    login = SimpleNamespace(exists=lambda: False)
+    account = make_account(success_window_title_regex="^NeverMatches$")
+    status, category, _message, verification = _run_wait(
+        monkeypatch, adapter, login, account, {"1:9": "whatever"}
+    )
+    assert status == LoginStatus.FAILED
+    assert category == ErrorCategory.UI_VERIFICATION_UNVERIFIED
+    assert verification == windows_module.WINDOWS_REAL_TEST_REQUIRED
+
+
+def test_windows_never_claims_success_while_the_login_dialog_is_open(monkeypatch):
+    adapter, main = _wait_setup()
+    login = SimpleNamespace(exists=lambda: True)
+    account = make_account(success_window_title_regex="Rakuten")
+    before = adapter._success_window_state([1], account)
+    status, category, _message, _verification = _run_wait(
+        monkeypatch, adapter, login, account, before
+    )
+    assert status != LoginStatus.SUCCESS
+    assert category == ErrorCategory.TIMEOUT
 
 
 def test_server_selection_uses_selection_pattern_not_click_input():
