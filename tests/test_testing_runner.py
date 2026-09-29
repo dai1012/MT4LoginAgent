@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from types import SimpleNamespace
 
 import pytest
 
+from app.adapters.slack.commands import CommandError, parse_slash_command
 from app.models.domain import AccountCreate, GroupCreate
 from app.testing.models import (
     DetectedControl,
@@ -16,6 +18,7 @@ from app.testing.models import (
 )
 from app.testing.mt4_discovery import apply_confirmed_selectors, discover_account, selector_diff
 from app.testing.runner import TestRunner
+from app.testing.slack_tests import run_slack_checks
 from tests.support import account_values
 
 
@@ -528,3 +531,65 @@ async def test_discovery_does_not_fabricate_placeholder_controls(runtime, monkey
     ready = next(item for item in outcome.results if item.id == "MT4_DISCOVERY_READY")
     assert ready.status == TestStatus.WARN
     assert ready.technical_detail == "route=none"
+
+
+def test_malformed_samples_are_rejected_for_structural_reasons_not_credential_shape():
+    """The diagnostic must not be satisfiable, or breakable, by credential shape."""
+    for sample in ("/mt4foo 123456", "bad/alias 123456"):
+        with pytest.raises(CommandError):
+            parse_slash_command(sample)
+    # A value the retired digit-only rule would have rejected is a legal credential
+    # now. If this ever fails, tightening the parser again would silently turn the
+    # Phase 3 diagnostic green while breaking real Demo passwords.
+    assert parse_slash_command("A not-an-otp").otp == "not-an-otp"
+
+
+@pytest.mark.asyncio
+async def test_slack_malformed_command_diagnostic_passes(runtime):
+    results = await run_slack_checks(runtime)
+    malformed = next(item for item in results if item.id == "SLACK_MALFORMED_COMMAND")
+    assert malformed.status == TestStatus.PASS
+    assert malformed.technical_detail == "samples=2;accepted=0"
+    assert malformed.message == "Malformed command is rejected locally."
+    # The action must not tell the user to keep a rule that was deliberately removed.
+    assert "OTP validation" not in malformed.suggested_action
+    assert "opaque" in malformed.suggested_action
+
+
+@pytest.mark.asyncio
+async def test_slack_malformed_command_diagnostic_fails_if_a_sample_is_accepted(
+    runtime, monkeypatch
+):
+    """A diagnostic that cannot go red is not a diagnostic."""
+    import app.testing.slack_tests as slack_tests
+
+    monkeypatch.setattr(slack_tests, "parse_slash_command", lambda _text: SimpleNamespace())
+    results = await run_slack_checks(runtime)
+    malformed = next(item for item in results if item.id == "SLACK_MALFORMED_COMMAND")
+    assert malformed.status == TestStatus.FAIL
+    assert malformed.message == "Malformed command was accepted."
+    # The failing samples are named so the report is actionable, not just red.
+    assert "/mt4foo 123456" in malformed.technical_detail
+    assert "bad/alias 123456" in malformed.technical_detail
+
+
+def test_slack_malformed_command_diagnostic_goes_green_again_when_samples_are_rejected(
+    runtime, monkeypatch
+):
+    """Accepting one sample and rejecting the other must still fail the check."""
+    import app.testing.slack_tests as slack_tests
+
+    original = parse_slash_command
+
+    def accept_only_the_alias_sample(text):
+        if text == "/mt4foo 123456":
+            return SimpleNamespace()
+        return original(text)
+
+    monkeypatch.setattr(slack_tests, "parse_slash_command", accept_only_the_alias_sample)
+    import asyncio
+
+    results = asyncio.run(run_slack_checks(runtime))
+    malformed = next(item for item in results if item.id == "SLACK_MALFORMED_COMMAND")
+    assert malformed.status == TestStatus.FAIL
+    assert "accepted:/mt4foo 123456" in malformed.technical_detail

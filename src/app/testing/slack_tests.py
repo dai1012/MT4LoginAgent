@@ -111,11 +111,22 @@ async def run_slack_checks(runtime: AgentRuntime) -> list[TestResult]:
             severity=TestSeverity.HIGH,
         )
     )
-    malformed = False
-    try:
-        parse_slash_command("A not-an-otp")
-    except CommandError:
-        malformed = True
+    # These samples must be rejected for reasons that have nothing to do with the
+    # credential, which is deliberately an opaque secret with no format rule. A
+    # sample that only failed because of a digit pattern went stale the moment the
+    # credential became opaque, and reported a healthy parser as broken.
+    malformed_samples = (
+        "/mt4foo 123456",  # command name is not followed by whitespace
+        "bad/alias 123456",  # the first token is not a valid alias
+    )
+    accepted: list[str] = []
+    for sample in malformed_samples:
+        try:
+            parse_slash_command(sample)
+        except CommandError:
+            continue
+        accepted.append(sample)
+    malformed = not accepted
     results.append(
         _result(
             "SLACK_MALFORMED_COMMAND",
@@ -124,7 +135,15 @@ async def run_slack_checks(runtime: AgentRuntime) -> list[TestResult]:
             "Malformed command is rejected locally."
             if malformed
             else "Malformed command was accepted.",
-            action="Keep the parser strict; do not relax OTP validation.",
+            detail=(
+                f"samples={len(malformed_samples)};accepted={len(accepted)}"
+                if not accepted
+                else "accepted:" + ",".join(accepted)
+            ),
+            action=(
+                "Keep the command structure and alias rule strict; the credential is "
+                "an opaque secret and is never validated by shape."
+            ),
             severity=TestSeverity.MEDIUM,
         )
     )
