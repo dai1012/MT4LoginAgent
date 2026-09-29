@@ -19,6 +19,8 @@ from app.models.api import (
     SlackSettingsUpdate,
     TestPhaseRequest,
     TestSelectorApplyRequest,
+    Win32ApplyRequest,
+    Win32InspectRequest,
 )
 from app.models.domain import AccountCreate, AccountPatch, GroupCreate, GroupPatch
 from app.models.errors import (
@@ -284,6 +286,22 @@ def create_api_router(runtime: AgentRuntime) -> APIRouter:
             confirmed=payload.confirmed,
         )
         await runner.refresh_report()
+        return result
+
+    @router.post("/test/windows/win32-inspect")
+    async def inspect_test_windows_win32(payload: Win32InspectRequest) -> dict[str, object]:
+        """Read-only: propose a Win32 dialog configuration for a new broker or build."""
+        return await runtime.test_runner.inspect_win32(payload.account_id)
+
+    @router.post("/test/windows/win32-apply")
+    async def apply_test_windows_win32(payload: Win32ApplyRequest) -> dict[str, object]:
+        """Write only the Account's Win32 fallback fields from a reviewed suggestion."""
+        result = runtime.test_runner.apply_win32_settings(
+            payload.account_id,
+            {"suggested": payload.suggested, "confidence": payload.confidence},
+        )
+        if result.get("applied"):
+            await runtime.test_runner.refresh_report()
         return result
 
     @router.get("/test/windows/report")

@@ -17,7 +17,13 @@ from uuid import uuid4
 from pydantic import SecretStr
 
 from app.adapters.slack.commands import CommandError
-from app.models.domain import AccountPatch, LoginRequest, LoginStatus
+from app.models.domain import (
+    _WIN32_FALLBACK_KEYS,  # single source of truth for the control id key space
+    AccountPatch,
+    LoginRequest,
+    LoginStatus,
+    Win32FallbackConfig,
+)
 from app.models.errors import AppError, NotFoundError
 from app.runtime import AgentRuntime
 from app.security.redaction import redact_text, sensitive_values
@@ -512,6 +518,136 @@ class TestRunner:
             self._record_phase(TestPhase.REAL_LOGIN, results)
             await self._write(otp=otp, uia_payload=self._diagnostic or None)
             return results
+
+    _WIN32_SUGGESTION_REQUIRED = (
+        "dialog_class",
+        "anchors",
+        "login_id_combo",
+        "login_id_edit",
+        "otp",
+        "server_combo",
+        "server_edit",
+        "login_button",
+    )
+
+    async def inspect_win32(self, account_id: str) -> dict[str, Any]:
+        """Read-only inspection of the target's login dialog.
+
+        Proposes a Win32 dialog configuration for a broker or MT4 build that has
+        never been adapted. Nothing is written here: the caller shows the suggestion
+        and a human applies it. Only control metadata is read, so no credential can
+        be exposed by inspecting.
+        """
+        report: dict[str, Any] = {
+            "outcome": "unavailable",
+            "detail": "",
+            "suggested": {},
+            "confidence": {},
+            "titles": {},
+            "menu_captions": [],
+            "appliable": False,
+            "missing": list(self._WIN32_SUGGESTION_REQUIRED),
+        }
+        try:
+            account = self.runtime.accounts.get(account_id)
+        except NotFoundError:
+            report["detail"] = "the Account was not found"
+            return report
+        if not self.windows_available:
+            report["detail"] = "WINDOWS_REAL_TEST_REQUIRED: Win32 inspection requires Windows."
+            return report
+        pids = self.runtime.automation._process_ids(account)
+        try:
+            report = self.runtime.automation._win32_inspect(pids, account)
+        except Exception as exc:
+            report["outcome"] = "error"
+            # Never include the exception text: it could echo a control value.
+            report["detail"] = f"inspection failed: {type(exc).__name__}"
+        confidence = report.get("confidence") or {}
+        missing = [key for key in self._WIN32_SUGGESTION_REQUIRED if confidence.get(key) != "HIGH"]
+        report["missing"] = missing
+        report["appliable"] = not missing
+        self._add([self._win32_inspect_result(report)])
+        return report
+
+    def _win32_inspect_result(self, report: dict[str, Any]) -> TestResult:
+        outcome = str(report.get("outcome") or "unavailable")
+        missing = list(report.get("missing") or [])
+        if outcome == "inspected" and not missing:
+            status, message = (
+                TestStatus.PASS,
+                "Win32 dialog inspection produced a complete suggestion. Review it, then "
+                "apply it to this Account.",
+            )
+        elif outcome == "inspected":
+            status, message = (
+                TestStatus.WARN,
+                "Win32 dialog inspection found the dialog but could not resolve every "
+                "field uniquely. Nothing was guessed; fill the listed fields by hand.",
+            )
+        else:
+            status, message = (
+                TestStatus.WARN,
+                "Win32 dialog inspection could not inspect a login dialog.",
+            )
+        return TestResult(
+            id="WIN32_DIALOG_INSPECTION",
+            category=TestCategory.MT4_DISCOVERY,
+            name="Win32 dialog inspection",
+            status=status,
+            severity=TestSeverity.MEDIUM,
+            message=message,
+            technical_detail=(
+                f"outcome={outcome}; appliable={bool(report.get('appliable'))}; "
+                f"unresolved={','.join(missing) if missing else 'none'}"
+            ),
+            suggested_action=(
+                "Open the MT4 login dialog, then run Detect Win32 again."
+                if outcome != "inspected"
+                else "Apply the suggested settings once the list is empty."
+                if not missing
+                else "Fill the unresolved fields by hand, or open the dialog and retry."
+            ),
+            evidence={"suggested": report.get("suggested") or {}},
+        )
+
+    async def apply_win32_settings(
+        self, account_id: str, suggestion: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Write only the Account's Win32 fallback fields from a reviewed suggestion.
+
+        Alias, login id, server, terminal path and cwd are never touched, so applying
+        a suggestion cannot change which broker account or which MT4 instance the
+        Account points at.
+        """
+        confidence = {str(k): str(v) for k, v in (suggestion.get("confidence") or {}).items()}
+        proposed = dict(suggestion.get("suggested") or {})
+        missing = [key for key in self._WIN32_SUGGESTION_REQUIRED if confidence.get(key) != "HIGH"]
+        if missing:
+            return {
+                "applied": False,
+                "reason": "refusing to apply: " + ", ".join(missing),
+            }
+        control_ids: dict[str, int] = {}
+        for key in _WIN32_FALLBACK_KEYS:
+            value = proposed.get(key)
+            if not isinstance(value, int) or isinstance(value, bool) or not 0 < value <= 65535:
+                return {"applied": False, "reason": f"invalid suggested id for {key}"}
+            control_ids[key] = value
+        anchors = proposed.get("anchors") or []
+        dialog_class = str(proposed.get("dialog_class") or "").strip()
+        if not dialog_class or not isinstance(anchors, list) or not anchors:
+            return {"applied": False, "reason": "dialog_class and anchors are required"}
+        patch = AccountPatch(
+            win32_fallback=Win32FallbackConfig(
+                enabled=True,
+                dialog_class=dialog_class,
+                anchors=[str(item) for item in anchors],
+                control_ids=control_ids,
+            )
+        )
+        self.runtime.accounts.update(account_id, patch)
+        return {"applied": True, "account_id": account_id, "control_ids": control_ids}
 
     async def await_slack_result(
         self,

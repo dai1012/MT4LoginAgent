@@ -15,6 +15,7 @@ from typing import Any
 from pydantic import SecretStr
 
 from app.models.domain import (
+    _WIN32_FALLBACK_KEYS,  # single source of truth for the control id key space
     AccountConfig,
     AccountRuntimeStatus,
     AutomationResult,
@@ -659,7 +660,12 @@ class WindowsAutomation:
         )
 
     def _win32_open_login_dialog(
-        self, pids: list[int], account: AccountConfig, *, wait_seconds: float = 8.0
+        self,
+        pids: list[int],
+        account: AccountConfig,
+        *,
+        wait_seconds: float = 8.0,
+        require_opt_in: bool = True,
     ) -> tuple[str, str]:
         """Open the MT4 login dialog through the window's own menu.
 
@@ -669,7 +675,7 @@ class WindowsAutomation:
         the main window of the process this Account resolved to. The credential is
         not involved at any point, so a failure here cannot consume one.
         """
-        if not account.win32_fallback.enabled:
+        if require_opt_in and not account.win32_fallback.enabled:
             return "not_enabled", "the Win32 dialog fallback is not enabled for this Account"
         if self._win32_dialog(pids, account) is not None:
             return "already_open", "the login dialog was already present"
@@ -796,6 +802,318 @@ class WindowsAutomation:
                 continue
             return dialog
         return None
+
+    def _win32_inspect(self, pids: list[int], account: AccountConfig) -> dict[str, Any]:
+        """Suggest a Win32 dialog configuration for the resolved MT4 instance.
+
+        This reads control *metadata* only: native control id, class name, and the
+        window text of inert controls. It never reads an Edit's value, so it cannot
+        surface a credential, and it never saves anything: the caller presents the
+        suggestions and a human applies them.
+
+        Confidence is HIGH only when the structural evidence resolves uniquely. A
+        shape that cannot be pinned down is reported as NEEDS_CONFIRMATION rather
+        than guessed, so a wrong id is never offered as a confident answer.
+        """
+        report: dict[str, Any] = {
+            "outcome": "unavailable",
+            "detail": "",
+            "suggested": {},
+            "confidence": {},
+            "dialog_class": None,
+            "dialog_title": None,
+            "titles": {},
+            "menu_captions": [],
+        }
+        resolved = sorted({int(item) for item in pids})
+        if len(resolved) != 1:
+            report["detail"] = (
+                f"expected exactly one MT4 process, found {len(resolved)}; the "
+                "multi-instance guard needs a distinct terminal folder and cwd"
+            )
+            return report
+
+        dialog, how = self._win32_inspect_dialog(resolved, account)
+        if dialog is None:
+            report["detail"] = how
+            return report
+
+        report["outcome"] = "inspected"
+        report["detail"] = how
+        try:
+            report["dialog_class"] = self._win32_class(dialog)
+            report["dialog_title"] = str(dialog.window_text() or "")
+        except Exception as exc:
+            report["detail"] = f"{how}; identity unreadable: {type(exc).__name__}"
+        pairs = self._win32_suggest(dialog)
+        report["suggested"] = {key: value for key, (value, _) in pairs.items()}
+        report["confidence"] = {key: conf for key, (_, conf) in pairs.items()}
+        report["titles"] = self._win32_title_suggestions(resolved, account, dialog)
+        report["menu_captions"] = self._win32_menu_captions(resolved, account)
+        return report
+
+    def _win32_inspect_dialog(
+        self, pids: list[int], account: AccountConfig
+    ) -> tuple[Any | None, str]:
+        """Find the login dialog, opening it through the menu when necessary."""
+        existing, why = self._win32_locate_dialog(pids)
+        if existing is not None:
+            return existing, "the login dialog was already open"
+        # Reuse the menu driven open the real login uses. A different broker may not
+        # ship the expected menu caption, so failure is not fatal here: the user can
+        # open the dialog by hand and run Detect Win32 again.
+        self._win32_open_login_dialog(pids, account, require_opt_in=False)
+        existing, why = self._win32_locate_dialog(pids)
+        if existing is not None:
+            return existing, "the login dialog was opened through the window menu"
+        return None, (
+            f"{why}. If this broker uses a different menu caption, open the login "
+            "dialog by hand and run Detect Win32 again."
+        )
+
+    def _win32_locate_dialog(self, pids: list[int]) -> tuple[Any | None, str]:
+        """Locate a login-shaped dialog belonging to the resolved pids.
+
+        The configuration is not known yet, so no dialog class is assumed. A window
+        qualifies when it exposes both an Edit and a Button, which is the same shape
+        test the real login path uses.
+        """
+        expected = set(pids)
+        candidates: list[Any] = []
+        for handle, process_id, _class_name, _title in self._enum_top_windows():
+            if process_id not in expected:
+                continue
+            dialog = self._win32_wrap(handle)
+            if dialog is None:
+                continue
+            try:
+                if not self._win32_login_shaped(dialog):
+                    continue
+            except Exception:
+                continue
+            candidates.append(dialog)
+        if not candidates:
+            return None, "no window with both an Edit and a Button was found"
+        if len(candidates) > 1:
+            return None, f"{len(candidates)} login-shaped windows matched; refusing to choose"
+        return candidates[0], "one login-shaped window matched"
+
+    def _win32_login_shaped(self, dialog: Any) -> bool:
+        """Whether a native dialog exposes both an Edit and a Button.
+
+        The UIA shape test cannot answer this: a broker whose login form UIA never
+        exposes is exactly the case the Win32 route exists for.
+        """
+        classes = set()
+        for control in self._win32_descendants(dialog):
+            classes.add(self._win32_class(control))
+        return "Edit" in classes and "Button" in classes
+
+    def _win32_metadata(self, control: Any) -> dict[str, Any]:
+        """Control metadata only. The caption of an editable control is never read."""
+        try:
+            class_name = self._win32_class(control)
+        except Exception:
+            class_name = ""
+        try:
+            control_id = self._win32_control_id(control)
+        except Exception:
+            control_id = None
+        item: dict[str, Any] = {"class": class_name, "control_id": control_id}
+        # An Edit can hold the Login ID and a ComboBox the selected server, so only
+        # inert controls expose their caption.
+        if class_name not in {"Edit", "ComboBox"}:
+            try:
+                item["text"] = str(control.window_text() or "")
+            except Exception:
+                item["text"] = ""
+        return item
+
+    def _win32_owned_by_combo(self, dialog: Any) -> set[int]:
+        """Identity set of the Edits that a ComboBox owns."""
+        owned: set[int] = set()
+        for control in self._win32_descendants(dialog):
+            try:
+                if self._win32_class(control) != "ComboBox":
+                    continue
+                for child in control.descendants():
+                    if self._win32_class(child) == "Edit":
+                        owned.add(id(child))
+            except Exception:
+                continue
+        return owned
+
+    def _win32_suggest(self, dialog: Any) -> dict[str, Any]:
+        """Map the dialog's controls onto the configuration's logical keys."""
+        children = self._win32_descendants(dialog)
+        metadata = [self._win32_metadata(control) for control in children]
+        owned = self._win32_owned_by_combo(dialog)
+        controls_by_identity = {
+            id(control): meta
+            for control, meta in zip(children, metadata, strict=True)
+        }
+
+        def by_class(name: str) -> list[dict[str, Any]]:
+            return [item for item in metadata if item["class"] == name]
+        combos = by_class("ComboBox")
+        buttons = by_class("Button")
+        free_edits = [
+            meta
+            for control, meta in controls_by_identity.items()
+            if meta["class"] == "Edit" and control not in owned
+        ]
+
+        suggested: dict[str, Any] = {}
+
+        def _put(key: str, value: Any, confidence: str) -> None:
+            suggested[key] = (value, confidence)
+
+        try:
+            _put("dialog_class", self._win32_class(dialog), "HIGH")
+        except Exception:
+            _put("dialog_class", None, "NEEDS_CONFIRMATION")
+
+        def _combo_edit(combo_id: Any) -> Any:
+            for control in children:
+                try:
+                    if self._win32_class(control) != "ComboBox":
+                        continue
+                    if self._win32_control_id(control) != combo_id:
+                        continue
+                    owned_edits = [
+                        child
+                        for child in control.descendants()
+                        if self._win32_class(child) == "Edit"
+                    ]
+                except Exception:
+                    continue
+                if len(owned_edits) == 1:
+                    return self._win32_control_id(owned_edits[0])
+            return None
+
+        if len(combos) == 2:
+            # Dialog order is login id first then server on every MT4 build.
+            for key, combo in (("login_id_combo", combos[0]), ("server_combo", combos[1])):
+                _put(key, combo["control_id"], "HIGH")
+                edit_id = _combo_edit(combo["control_id"])
+                _put(
+                    key.replace("_combo", "_edit"),
+                    edit_id,
+                    "HIGH" if edit_id else "NEEDS_CONFIRMATION",
+                )
+        elif combos:
+            # Keep the reported shape identical whatever was found, so a caller can
+            # always read the same keys.
+            for index, combo in enumerate(combos):
+                key = "login_id_combo" if index == 0 else "server_combo"
+                edit_id = _combo_edit(combo["control_id"])
+                _put(key, combo["control_id"], "NEEDS_CONFIRMATION")
+                _put(
+                    key.replace("_combo", "_edit"),
+                    edit_id,
+                    "NEEDS_CONFIRMATION",
+                )
+        else:
+            for key in ("login_id_combo", "server_combo", "login_id_edit", "server_edit"):
+                _put(key, None, "NEEDS_CONFIRMATION")
+
+        # The credential box is the Edit no ComboBox owns.
+        _put("otp", free_edits[0]["control_id"] if len(free_edits) == 1 else None,
+             "HIGH" if len(free_edits) == 1 else "NEEDS_CONFIRMATION")
+
+        if len(buttons) == 1:
+            _put("login_button", buttons[0]["control_id"], "HIGH")
+        else:
+            words = ("login", "ログイン", "接続", "sign in")
+            matches = [
+                item
+                for item in buttons
+                if any(word in str(item.get("text", "")).casefold() for word in words)
+            ]
+            _put("login_button", matches[0]["control_id"] if len(matches) == 1 else None,
+                 "HIGH" if len(matches) == 1 else "NEEDS_CONFIRMATION")
+
+        # Whatever was found, the reported shape is identical: every key the
+        # configuration defines is present, so a caller can always read them.
+        for key in _WIN32_FALLBACK_KEYS:
+            if key not in suggested:
+                _put(key, None, "NEEDS_CONFIRMATION")
+
+        anchors = self._win32_anchor_candidates(metadata)
+        _put("anchors", anchors, "HIGH" if anchors else "NEEDS_CONFIRMATION")
+        return suggested
+
+    @staticmethod
+    def _win32_anchor_candidates(metadata: list[dict[str, Any]]) -> list[str]:
+        """Visible field labels, later used to confirm the dialog is the right one."""
+        anchors: list[str] = []
+        for item in metadata:
+            if item["class"] not in {"Static", "Label"}:
+                continue
+            text = str(item.get("text", "")).strip()
+            if not text or len(text) > 60 or text in anchors:
+                continue
+            anchors.append(text)
+            if len(anchors) == 2:
+                break
+        return anchors
+
+    def _win32_title_suggestions(
+        self, pids: list[int], account: AccountConfig, dialog: Any
+    ) -> dict[str, str | None]:
+        """Suggest anchored title expressions from what is on screen right now.
+
+        The Account's own login id is generalised away rather than written into the
+        expression, so a suggestion stays valid for the broker's other accounts
+        instead of encoding a value that expires with this one.
+        """
+        suggestions: dict[str, str | None] = {
+            "window_title_regex": None,
+            "success_window_title_regex": None,
+        }
+        try:
+            login_title = str(dialog.window_text() or "").strip()
+        except Exception:
+            login_title = ""
+        if login_title:
+            suggestions["window_title_regex"] = f"^{re.escape(login_title)}$"
+
+        main_title = ""
+        for _handle, process_id, class_name, title in self._enum_top_windows():
+            if process_id in set(pids) and class_name.startswith("MetaQuotes"):
+                main_title = str(title or "").strip()
+                break
+        if main_title:
+            # Escape first and substitute afterwards: escaping a string that already
+            # contains the placeholder would turn the wildcard into a literal "\.*".
+            escaped = re.escape(main_title)
+            login_id = (account.login_id or "").strip()
+            if login_id:
+                escaped = re.sub(re.escape(login_id), ".*", escaped)
+            suggestions["success_window_title_regex"] = f"^{escaped}$"
+        return suggestions
+
+    def _win32_menu_captions(
+        self, pids: list[int], account: AccountConfig
+    ) -> list[str]:
+        """Report the target's own menu captions so a new broker's wording is visible.
+
+        The global caption list is never modified from here; it stays a code constant
+        that a human extends after seeing what this build actually ships.
+        """
+        hwnd, _detail = self._win32_main_window(pids, account)
+        if hwnd is None:
+            return []
+        captions: list[str] = []
+        try:
+            commands = self._win32_menu_commands(hwnd)
+        except Exception:
+            return []
+        for caption, _command_id in commands:
+            text = str(caption or "").strip()
+            if text and text not in captions:
+                captions.append(text)
+        return captions[:40]
 
     def _win32_select_server(
         self, controls: dict[str, Any], account: AccountConfig

@@ -134,8 +134,13 @@
         <h3>Phase 2 — MT4 Discovery / UIA</h3>
         <p class="muted">不输入 OTP；枚举进程和 UIA 候选控件。不会自动修改正式 Account。</p>
         <label>Account<select id="test-account"><option value="">选择 Account</option></select></label>
-        <button class="button" data-action="run-test-discovery">Detect</button>
+        <div class="actions">
+          <button class="button" data-action="run-test-discovery">Detect</button>
+          <button class="button secondary" data-action="run-win32-inspect" id="win32-inspect-btn" disabled>Detect Win32</button>
+        </div>
+        <p class="muted">Detect Win32 only reads the login dialog and changes nothing by itself. Nothing is saved until a human applies. The inspection never reads the credential field.</p>
         <div id="test-controls"></div>
+        <div id="win32-inspector"></div>
         <h3>Phase 3 — Slack Safe Tests</h3>
         <p class="muted">不会向真实 Slack 发送测试消息；真实命令会显示 ACTION REQUIRED。</p>
         <button class="button" data-action="run-test-slack">Run Phase 3</button>

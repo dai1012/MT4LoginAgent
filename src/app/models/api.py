@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import Field, SecretStr, field_validator
 
 from app.models.domain import APIModel, AutomationMode, check_credential
@@ -15,6 +17,18 @@ class GroupOrderUpdate(APIModel):
 
 class GeneralSettingsUpdate(APIModel):
     automation_mode: AutomationMode
+
+
+class Win32InspectRequest(APIModel):
+    account_id: str = Field(min_length=1, max_length=64)
+
+
+class Win32ApplyRequest(APIModel):
+    account_id: str = Field(min_length=1, max_length=64)
+    # The reviewed suggestion, exactly as the inspection returned it. Applying is
+    # refused unless every required field carries HIGH confidence.
+    suggested: dict[str, Any] = Field(default_factory=dict)
+    confidence: dict[str, str] = Field(default_factory=dict)
 
 
 class SlackSettingsUpdate(APIModel):
