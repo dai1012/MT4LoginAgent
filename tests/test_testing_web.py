@@ -1,6 +1,30 @@
 from __future__ import annotations
 
 
+def test_windows_test_page_keeps_step_wizard_and_manual_guards(client):
+    page = client.get("/")
+    assert page.status_code == 200
+    assert 'id="test-steps"' in page.text
+    assert 'id="test-next-hint"' in page.text
+
+    script = client.get("/static/app.js")
+    assert script.status_code == 200
+    text = script.text
+    for step in ("environment", "discovery", "slack", "real_login", "group"):
+        assert f'key: "{step}"' in text
+
+    # The wizard may only gate on prerequisites; it must never drop a manual guard.
+    for guard in (
+        'if (!$("#test-broker-confirm").checked)',
+        'if (!$("#test-real-confirm").checked)',
+        'if (!$("#test-group-confirm").checked)',
+    ):
+        assert guard in text
+    assert 'if (!requireSteps("real_login"' in text
+    assert 'if (!requireSteps("group"' in text
+    assert "WINDOWS_REAL_TEST_REQUIRED" in text
+
+
 def test_windows_test_api_exposes_safe_phase_and_manual_guards(client, account_payload):
     status = client.get("/api/test/windows")
     assert status.status_code == 200

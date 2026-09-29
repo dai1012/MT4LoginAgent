@@ -58,7 +58,12 @@ Web Admin
 
 `123456` 只是本次命令中的一次性 OTP。Agent 不把 OTP 写入 History、配置文件或日志；History 只记录时间、alias、结果和耗时。停止程序是在 `start.bat` 窗口按 `Ctrl+C`；卸载步骤见下方。
 
-> 当前环境尚未做真实 Windows/Rakuten 验证。所有真实控件、Profile、broker、Slack 权限和登录结果都必须按 [`docs/WINDOWS-MT4-TEST.md`](docs/WINDOWS-MT4-TEST.md) 验证，不能把 Mock 或静态检查当成真实登录成功。
+> 当前环境尚未做真实 Windows/Rakuten 验证。所有真实控件、Profile、broker、Slack 权限和登录结果都必须验证，不能把 Mock 或静态检查当成真实登录成功。
+>
+> **准备做 Windows 实机测试？** 照着 **[`docs/WINDOWS-TEST-GUIDE.md`](docs/WINDOWS-TEST-GUIDE.md)** 做 ——
+> 那是给第一次接触本项目的人准备的完整操作手册：从装 Python、跑三个 bat，到 Slack App 配置、
+> Web Admin 建账号，再到 Step 1~5 每一阶段的目的/预期/失败怎么办，最后是验收标准和排错对照表。
+> 只想看勾选清单的，用 [`docs/WINDOWS-MT4-TEST.md`](docs/WINDOWS-MT4-TEST.md)。
 
 ## 1. 支持范围
 
