@@ -5,10 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "rakuten-mt4-login-agent"
 version = "1.0.0"
-description = "Auditable Windows Slack agent for Rakuten MT4 remote login"
+description = "Auditable Windows Slack agent for MT4 remote login"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "Proprietary" }
+license = { text = "MIT" }
 dependencies = [
   "fastapi>=0.115,<1.0",
   "uvicorn[standard]>=0.34,<1.0",

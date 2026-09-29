@@ -44,3 +44,16 @@ htmlcov/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Local tooling noise and test/build byproducts
+.cortexkit/
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+coverage.xml
+.nox/
+.tox/
+*.orig
+*.rej
