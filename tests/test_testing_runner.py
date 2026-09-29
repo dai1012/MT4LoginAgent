@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 
 import pytest
 
@@ -13,6 +14,122 @@ from tests.support import account_values
 
 def account_create(values):
     return AccountCreate.model_validate({**account_values(), **values})
+
+
+class _FakeElement:
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+
+
+class _FakeControl:
+    def __init__(self, control_type="Edit"):
+        self.element_info = _FakeElement(
+            control_type=control_type,
+            name="",
+            automation_id="",
+            class_name="",
+            is_password=False,
+            process_id=27784,
+        )
+
+
+class _FakeWindow:
+    def __init__(self, title):
+        self._title = title
+
+    def window_text(self):
+        return self._title
+
+
+class _FakeAdapter:
+    """Minimal WindowsAutomation stand-in exposing only the discovery surface."""
+
+    def __init__(self, title, control_type="Edit"):
+        self._window = _FakeWindow(title)
+        self._control = _FakeControl(control_type=control_type)
+
+    def _process_ids(self, account):
+        return [27784]
+
+    def _windows(self, pids):
+        return [self._window]
+
+    def _window_text(self, window):
+        return window.window_text()
+
+    def _window_key(self, window):
+        return "handle:1"
+
+    def _visible_controls(self, window, control_type):
+        if control_type != self._control.element_info.control_type:
+            return []
+        return [self._control]
+
+
+def _login_window_result(outcome):
+    return next(item for item in outcome.results if item.id == "UIA_LOGIN_WINDOW")
+
+
+@pytest.mark.asyncio
+async def test_login_window_diagnostic_follows_configured_regex_not_english_literal(
+    runtime, monkeypatch
+):
+    """Rakuten titles its login dialog 'Rakuten MetaTrader 4' with no 'login'."""
+    account = runtime.accounts.create(
+        account_create(
+            {
+                "display_name": "A",
+                "alias": "A",
+                "login_id": "local-id",
+                "server": "server",
+                "window_title_regex": r"^Rakuten MetaTrader 4$",
+            }
+        )
+    )
+    monkeypatch.setattr(sys, "platform", "win32")
+    outcome = await discover_account(account, _FakeAdapter("Rakuten MetaTrader 4"))
+    assert _login_window_result(outcome).status == TestStatus.PASS
+
+
+@pytest.mark.asyncio
+async def test_login_window_diagnostic_warns_when_window_misses_configured_regex(
+    runtime, monkeypatch
+):
+    """A title containing 'login' must not override the configured regex."""
+    account = runtime.accounts.create(
+        account_create(
+            {
+                "display_name": "A",
+                "alias": "A",
+                "login_id": "local-id",
+                "server": "server",
+                "window_title_regex": r"^Rakuten MetaTrader 4$",
+            }
+        )
+    )
+    monkeypatch.setattr(sys, "platform", "win32")
+    outcome = await discover_account(account, _FakeAdapter("Some Broker Login"))
+    assert _login_window_result(outcome).status == TestStatus.WARN
+
+
+@pytest.mark.asyncio
+async def test_login_window_diagnostic_keeps_english_fallback_without_configured_regex(
+    runtime, monkeypatch
+):
+    account = runtime.accounts.create(
+        account_create(
+            {
+                "display_name": "A",
+                "alias": "A",
+                "login_id": "local-id",
+                "server": "server",
+                "window_title_regex": None,
+            }
+        )
+    )
+    monkeypatch.setattr(sys, "platform", "win32")
+    outcome = await discover_account(account, _FakeAdapter("MT4 Login"))
+    assert _login_window_result(outcome).status == TestStatus.PASS
 
 
 @pytest.mark.asyncio

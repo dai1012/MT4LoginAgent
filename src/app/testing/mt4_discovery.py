@@ -7,6 +7,7 @@ candidate metadata for a human-confirmed selector decision.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -98,6 +99,33 @@ def _patterns(control: Any) -> list[str]:
     if callable(getter):
         patterns.append("TogglePattern")
     return sorted(set(patterns))
+
+
+def _control_fields(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Drop the window-title annotation so DetectedControl stays extra-free.
+
+    ``_collect_controls`` attaches ``window_title`` to each row for the login-window
+    scan, but DetectedControl forbids extra keys.
+    """
+    return {key: value for key, value in metadata.items() if key != "window_title"}
+
+
+def _matches_login_window(account: AccountConfig, title: str) -> bool:
+    """Decide whether a discovered window is the login window.
+
+    This mirrors ``WindowsAutomation._find_login_window`` so the diagnostic and the
+    real login path cannot disagree. The account's ``window_title_regex`` is the
+    single source of truth; the English "login" literal is only a fallback for
+    accounts that never configured one, because a broker such as Rakuten titles its
+    login dialog "Rakuten MetaTrader 4" with no "login" substring at all.
+    """
+    pattern = (account.window_title_regex or "").strip()
+    if pattern:
+        try:
+            return bool(re.search(pattern, title))
+        except re.error:
+            return False
+    return "login" in title.casefold()
 
 
 def _control_metadata(control: Any, account: AccountConfig) -> dict[str, Any]:
@@ -331,7 +359,9 @@ async def discover_account(account: AccountConfig, adapter: Any) -> DiscoveryOut
         ]
         if len(exact) == 1:
             outcome.controls.append(
-                DetectedControl(field=field_name, **exact[0], confidence="HIGH")
+                DetectedControl(
+                    field=field_name, **_control_fields(exact[0]), confidence="HIGH"
+                )
             )
         else:
             candidates = [
@@ -342,7 +372,9 @@ async def discover_account(account: AccountConfig, adapter: Any) -> DiscoveryOut
             if len(candidates) == 1:
                 outcome.controls.append(
                     DetectedControl(
-                        field=field_name, **candidates[0], confidence="NEEDS_CONFIRMATION"
+                        field=field_name,
+                        **_control_fields(candidates[0]),
+                        confidence="NEEDS_CONFIRMATION",
                     )
                 )
             else:
@@ -368,16 +400,19 @@ async def discover_account(account: AccountConfig, adapter: Any) -> DiscoveryOut
             evidence={"control_count": len(outcome.controls), "needs_confirmation": unresolved},
         )
     )
+    login_window_seen = any(
+        _matches_login_window(account, str(item.get("window_title") or ""))
+        for item in raw_controls
+    )
     outcome.results.append(
         _result(
             "UIA_LOGIN_WINDOW",
             "Login dialog discovery",
-            TestStatus.PASS
-            if any("login" in item["window_title"].casefold() for item in raw_controls)
-            else TestStatus.WARN,
-            "A login-like dialog was found."
-            if any("login" in item["window_title"].casefold() for item in raw_controls)
-            else "No login-like dialog was found; the Account may need MT4 launched first.",
+            TestStatus.PASS if login_window_seen else TestStatus.WARN,
+            "A window matching the Account window_title_regex was found."
+            if login_window_seen
+            else "No window matching the Account window_title_regex was found; "
+            "the Account may need MT4 launched first.",
             action="Open the MT4 login dialog and repeat discovery.",
             severity=TestSeverity.HIGH,
         )
