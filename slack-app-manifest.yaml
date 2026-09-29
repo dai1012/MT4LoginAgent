@@ -10,6 +10,12 @@ display_information:
   description: Local Windows agent for authorized Rakuten MT4 login automation
   background_color: "#0B1020"
 features:
+  # The Messages tab in App Home is where a user can type "/mt4 <alias> <credential>"
+  # without the bot having to be invited to a channel first. Slack routes the slash
+  # command itself, so no message event handler is needed for the command itself.
+  app_home:
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
   bot_user:
     display_name: MT4 Login Agent
     always_online: false

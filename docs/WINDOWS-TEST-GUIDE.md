@@ -182,6 +182,24 @@ U_B -> [B]
 
 ---
 
+### 4.5 在 App Home 的 Messages tab 里直接发命令
+
+manifest 已开启可写的 **Messages** tab。点 Bot 的 **Home → Messages**，在输入框直接打：
+
+```
+/mt4 A <credential>
+/mt4 status
+```
+
+不需要把 bot 拉进任何频道。Slack 自己把 slash command 路由给 bot，Agent 不接收普通文本消息，所以 `chat:write` 已经够用，**没有新增任何权限 scope**。
+
+⚠️ 改 manifest 不会自动作用到已安装的 App。若输入框仍显示“向此应用发送消息的功能已关闭”：
+
+1. <https://api.slack.com/apps> 打开该 App → **App Home** → 勾选 **Messages Tab** → **Save Changes**；或
+2. 整份 manifest 重新 **Update Manifest → Apply to Workspace**。
+
+命令协议没变，DM 与频道两条路径都继续可用。
+
 ## 4b. 当 UIA 看不到登录框：Win32 dialog fallback
 
 某些券商的登录框是普通 Win32 `#32770` 对话框，UI Automation **完全看不到**它
@@ -212,6 +230,16 @@ U_B -> [B]
 - 页面顶部 Step 条会直接写明"当前 Real Login 走 Win32 dialog fallback"。
 
 ## 5. Step 1 ~ Step 5 逐步操作
+
+> **Step 卡片的颜色含义**
+>
+> - `FAIL` —— 存在真正阻断的失败项
+> - `WARN` —— 存在真实告警或降级，但流程仍可继续
+> - `PASS` / `READY` —— 自动检查全部通过
+>
+> `MANUAL`（需要你手动决定的动作，例如破坏性测试、或去 Slack 发一条真实 `/mt4 status`）**不会**把 Step 卡染黄，而是在副文案里显示 `N manual confirmation remaining`。结果表格里每一行仍保留它自己的 `PASS` / `WARN` / `MANUAL` / `FAIL`，不会被改写。
+
+
 
 进入 **Windows Test** 页面。页面顶部有 5 步步骤条，会告诉你现在该做哪一步。
 

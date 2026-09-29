@@ -49,6 +49,10 @@ Web Admin
 6. 在 Web Admin 的 **Accounts** 添加一个账号。`Alias`（例如 `A`）是 Slack 中使用的短名称，不是真实 Login ID。
 7. 在 **Groups** 中把多个账号组成登录顺序；不需要批量登录时可以跳过。
 8. 在 **Slack** 页面创建/导入 [`slack-app-manifest.yaml`](slack-app-manifest.yaml)，填入 `xapp-` App-level token、`xoxb-` Bot token 和你的 Slack Member ID，点击 **保存并重连**。
+
+   manifest 已开启可写的 App Home **Messages** tab：点 Bot 的 **Home → Messages** 就能直接输入 `/mt4 <alias> <credential>`，不必先把 bot 拉进频道。Slack 自己负责把 slash command 路由给 bot，Agent 不需要额外的普通消息处理器。
+
+   ⚠️ manifest 改动不会自动作用到已安装的 App。若 App Home 的输入框仍显示“向此应用发送消息的功能已关闭”，需在 <https://api.slack.com/apps> 打开该 App → **App Home** → 勾选 **Messages Tab** → **Save Changes**；若改的是整份 manifest，则用 **Update Manifest → Apply to Workspace** 重新应用一次。命令协议本身不变。
 9. 在 Slack 发送：
 
    ```text
