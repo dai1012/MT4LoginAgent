@@ -81,3 +81,71 @@ def test_windows_test_report_endpoints_are_protected_and_bounded(client, account
     payload = client.get("/api/test/windows/report/report.json")
     assert payload.status_code == 200
     assert payload.json()["schema_version"] == "windows-acceptance-report/v1"
+
+
+def test_account_form_exposes_an_opt_in_win32_fallback_section(client):
+    page = client.get("/")
+    assert page.status_code == 200
+    body = page.text
+    for element_id in (
+        "account-win32-enabled",
+        "account-win32-class",
+        "account-win32-anchors",
+        "account-win32-id-login-id-combo",
+        "account-win32-id-login-id-edit",
+        "account-win32-id-otp",
+        "account-win32-id-server-combo",
+        "account-win32-id-server-edit",
+        "account-win32-id-login-button",
+    ):
+        assert f'id="{element_id}"' in body, element_id
+    script = client.get("/static/app.js").text
+    assert "collectWin32Fallback" in script
+    assert "loadWin32Fallback" in script
+    assert "win32_fallback: collectWin32Fallback()" in script
+    # The field is opt-in and must never be pre-selected.
+    assert "$(\"#account-win32-enabled\").checked = false" in script
+
+
+def test_profile_path_help_no_longer_claims_it_is_the_mt4_data_folder(client):
+    body = client.get("/").text
+    assert "MT4 process working directory (cwd)" in body
+    assert "NOT the MT4 Data Folder" in body
+    assert "Open Data Folder</textarea>" not in body
+
+
+def test_step_state_uses_real_phase_status_and_the_discovery_route(client):
+    script = client.get("/static/app.js").text
+    assert 'data.phase_status' in script
+    assert "data.discovery_route" in script
+    assert "未解析出可用路径" in script
+    # Completion alone must not imply PASS.
+    assert 'step.done ? badge("PASS")' not in script
+    # The step bar must state which route Real Login will take.
+    assert "Win32 dialog fallback（UIA Automation ID 不需要）" in script
+
+
+def test_apply_selectors_button_is_conditional(client):
+    script = client.get("/static/app.js").text
+    assert "const canApply = allHigh && route === \"uia\";" in script
+    assert 'canApply ? `<button class="button secondary"' in script
+    assert 'data-action="apply-test-selectors"' in script
+    assert "不需要应用 UIA Automation ID" in script
+
+
+def test_manual_confirmations_and_backend_gates_survive_the_hardening(client):
+    script = client.get("/static/app.js").text
+    for guard in (
+        'if (!$("#test-broker-confirm").checked)',
+        'if (!$("#test-real-confirm").checked)',
+        'if (!$("#test-group-confirm").checked)',
+        'if (!requireSteps("real_login"',
+        'if (!requireSteps("group"',
+    ):
+        assert guard in script, guard
+    assert "if (!requireSteps(\"real_login\", `) " not in script
+    # The wizard must never auto-send an OTP.
+    assert '$("#test-otp").value' in script
+    # The runner never sends an OTP on its own; the user types it and confirms.
+    assert 'type: "text"' not in script
+    assert 'id="test-otp" type="password"' in client.get("/").text

@@ -98,7 +98,7 @@ Web Admin local admin token (keep private): <一串字符>
 | Server | 必填 | 如 `RakutenMT4` |
 | **MT4 executable path** | 必填 | `C:\Program Files\Rakuten\terminal.exe` 这样的绝对路径 |
 | Process name | 可选 | 一般填 `terminal.exe` |
-| **Profile path** | Windows 必填 | Profile 目录绝对路径，**必须能唯一区分这个实例** |
+| **Process working directory (cwd)** | Windows 必填 | MT4 进程的当前工作目录绝对路径，**必须能唯一区分这个实例**。代码与 psutil `cwd()` 比较；**不是** MT4 Data Folder。Rakuten MT4 通常填 `C:\Program Files (x86)\Rakuten MetaTrader 4` |
 | **Login window title regex** | Windows 必填 | 匹配登录对话框标题，如 `(?i)^.*login.*$` |
 | **Success window title regex** | Windows 必填 | 匹配认证成功后的主窗口，**必须锚定**，如 `^Rakuten .* authenticated$` |
 | Launch arguments | 可选 | JSON 数组，如 `["/portable"]` |
@@ -171,6 +171,35 @@ Windows 上是**硬性要求**，至少需要这四个键：
 
 ---
 
+## 4b. 当 UIA 看不到登录框：Win32 dialog fallback
+
+某些券商的登录框是普通 Win32 `#32770` 对话框，UI Automation **完全看不到**它
+（`Desktop.windows()` 只返回主窗口，UIA descendants 里也没有登录控件）。
+这时启用 Account 表单底部的 **Win32 dialog fallback**：
+
+| 字段 | 说明 | Rakuten 实测值（仅供参考，需自行确认） |
+| --- | --- | --- |
+| 启用 | 默认关闭。UIA 路线能工作时不要开 | 关闭 |
+| Dialog class | 登录框的原生窗口类 | `#32770` |
+| Anchor texts | 逗号分隔，用来确认这是登录框而不是同标题的其它对话框 | `ログインID :, サーバー :` |
+| Login ID ComboBox id | 承载 Login ID 的 ComboBox | `1181` |
+| Login ID Edit id | 上面 ComboBox 里的子 Edit（**必须锚定父级**，不要全局匹配） | `1001` |
+| Password / OTP Edit id | 可见的凭据输入框 | `1220` |
+| Server ComboBox id | 券商下拉 | `1293` |
+| Server Edit id | 下拉里的子 Edit | `1001` |
+| Login Button id | 登录按钮（Cancel 通常是 2） | `1` |
+
+要点：
+
+- **两个 `Edit` 的 id 都是 `1001`**（Login ID 的和 Server 的），代码分别以各自 ComboBox 为父级锚定解析，
+  不会串错；如果你看到 Login ID 出现在 Server 栏，说明 id 填错了。
+- **不要填 hidden 的「ワンタイムパスワード」框**。本项目的 `otp` 语义就是 Slack 那次一次性 OTP 填进
+  **凭据栏（パスワード）**，因为 Account 根本不保存密码。填错栏位等于用错字段。
+- 启用后 Phase 2 会多出一条 `WIN32_DIALOG_DISCOVERY`：PASS 表示 dialog、pid、class、标题正则、
+  anchor 和全部 control id 都成立；WARN 时 `technical_detail` 会写明是编程/环境错误还是前置不满足。
+- 启用后 `Apply detected selectors` 不再可点 —— 这条路线用原生 id，不需要 UIA Automation ID。
+- 页面顶部 Step 条会直接写明"当前 Real Login 走 Win32 dialog fallback"。
+
 ## 5. Step 1 ~ Step 5 逐步操作
 
 进入 **Windows Test** 页面。页面顶部有 5 步步骤条，会告诉你现在该做哪一步。
@@ -190,17 +219,26 @@ Windows 上是**硬性要求**，至少需要这四个键：
 
 ### Step 2 — MT4 Detect（UIA Discovery）
 
-- **目的**：枚举进程与 UIA 候选控件，**这是唯一能确定真实 Automation ID 的机会**
+- **目的**：枚举进程与登录控件。UIA 找不到登录框时，会自动尝试你已启用的 Win32 dialog fallback。
+  运行前请**先手动打开 MT4 登录窗口并保持可见** —— 登录框不是独立的 UIA 顶层窗口时，只有它真实存在才可能被枚举到。
 - **需要 OTP**：否
 - **操作**：
   1. 在 Account 下拉框里选你的测试账号
   2. 点 **Detect**
-  3. 页面出现 **Detected UIA candidates** 表格（Field / AutomationId / Type / Password / Confidence）
-  4. 如果表格里的 AutomationId 合理，点 **Apply detected selectors** 自动回填到该 Account
-  5. 回 Accounts 页确认 `Test` 显示 `valid`
-- **预期**：检测到 login_id / otp / server / login_button 候选
+  3. 看 **`MT4_DISCOVERY_READY`** 这一条 —— 它才是"能不能继续"的唯一判据
+- **看哪一条结果**：
+
+  | `MT4_DISCOVERY_READY` | 含义 | 下一步 |
+  | --- | --- | --- |
+  | **PASS** + `route=uia` | 四个 UIA selector 都已解析 | 若有 **Apply detected selectors** 按钮就点它，再回 Accounts 页确认 `Test` 显示 `valid` |
+  | **PASS** + `route=win32` | 走已启用的 Win32 dialog fallback | **不需要** Apply，直接进 Step 4 |
+  | **WARN** + `route=none` | 没解析出任何可用路径 | 确认 MT4 登录窗可见后重跑 Detect；看 `WIN32_DIALOG_DISCOVERY` 的 `technical_detail` |
+
+- **候选表不再会骗你**：以前即使什么都没找到也会列出 4 行 MANUAL，看起来像"已检测到"。
+  现在找不到的字段会进 `missing_fields`，**不会**被列成 detected 行。
+- **Step 条不再把"跑过"当"通过"**：只有 `route=uia` 或 `route=win32` 的 Step 2 才算可用。
 - **失败怎么办**：
-  - `INSTANCE_UNVERIFIABLE` → Profile path 没填或填错，无法唯一确定是哪个 MT4 实例
+  - `INSTANCE_UNVERIFIABLE` → cwd 没填或填错，无法唯一确定是哪个 MT4 实例
   - `AMBIGUOUS_PROCESS` → 同时有多个匹配进程，关掉多余的 MT4
   - `TERMINAL_NOT_FOUND` → executable path 填错
   - `UI_CONTROL_NOT_FOUND` → 窗口标题 regex 没匹配上，用任务管理器确认窗口标题再改正则
@@ -347,12 +385,12 @@ Windows 上是**硬性要求**，至少需要这四个键：
 
 | 错误分类 | 含义 | 处理 |
 |---|---|---|
-| `instance_unverifiable` | 无法唯一确定是哪个 MT4 实例 | 填对 `profile_path`；关掉多余 MT4 |
+| `instance_unverifiable` | 无法唯一确定是哪个 MT4 实例 | 填对 process cwd；关掉多余 MT4 |
 | `ambiguous_process` | 匹配到多个进程 | 关掉多余的 terminal.exe |
 | `terminal_not_found` | executable path 错 | 核对 `terminal.exe` 真实路径 |
 | `mt4_launch_failed` | 启动 MT4 失败 | 检查路径、权限、是否被杀毒拦截 |
 | `ui_control_not_found` | 找不到控件 | 改正则；重做 Step 2 并 Apply selectors |
-| `ui_verification_unverified` | 登录后无法确证成功窗口 | 修正 `success_window_title_regex`（要锚定） |
+| `ui_verification_unverified` | 登录后无法确证成功窗口 | 修正 `success_window_title_regex`（只锚定 broker/server 稳定特征，不要写具体账号 ID） |
 | `already_running_no_login_window` | MT4 在跑但没有登录窗口 | 手动打开登录对话框后重试 |
 | `ui_automation_error` | UIA 层异常 | 重启 Agent；确认非管理员运行时的 UAC 场景 |
 

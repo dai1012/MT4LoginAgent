@@ -83,7 +83,10 @@ def validate_account_configuration(account: AccountConfig) -> ValidationResult:
             ValidationCheck(
                 name="profile_path_present",
                 passed=profile_present,
-                detail="Windows requires a Profile path to disambiguate MT4 instances",
+                detail=(
+                    "Windows requires the MT4 process working directory (cwd) to "
+                    "disambiguate instances; this is not the MT4 Data Folder"
+                ),
             )
         )
     if account.profile_path and sys.platform == "win32":
@@ -92,9 +95,9 @@ def validate_account_configuration(account: AccountConfig) -> ValidationResult:
             ValidationCheck(
                 name="profile_path_absolute",
                 passed=profile_absolute,
-                detail="Windows profile path is absolute"
+                detail="Windows process working directory (cwd) path is absolute"
                 if profile_absolute
-                else "Windows profile path must be absolute",
+                else "Windows process working directory (cwd) path must be absolute",
             )
         )
         profile_exists = Path(account.profile_path).expanduser().is_dir()
@@ -102,7 +105,7 @@ def validate_account_configuration(account: AccountConfig) -> ValidationResult:
             ValidationCheck(
                 name="profile_exists",
                 passed=profile_exists,
-                detail="Profile directory exists"
+                detail="Process working directory (cwd) exists"
                 if profile_exists
                 else "Configured profile directory was not found",
             )

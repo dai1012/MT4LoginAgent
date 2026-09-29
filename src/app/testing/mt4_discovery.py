@@ -35,6 +35,8 @@ class DiscoveryOutcome:
     controls: list[DetectedControl] = field(default_factory=list)
     diagnostic: dict[str, Any] = field(default_factory=dict)
     account: AccountConfig | None = None
+    missing_fields: list[str] = field(default_factory=list)
+    route: str = ""
 
 
 def _result(
@@ -425,14 +427,16 @@ async def discover_account(account: AccountConfig, adapter: Any) -> DiscoveryOut
                     )
                 )
             else:
-                outcome.controls.append(
-                    DetectedControl(
-                        field=field_name,
-                        confidence="NEEDS_CONFIRMATION",
-                        control_type=field_name_to_control_type(field_name),
-                    )
-                )
-    unresolved = [item.field for item in outcome.controls if item.confidence != "HIGH"]
+                # Nothing was actually found for this field. Emitting a placeholder
+                # row here made the UI look like the control had been detected, so the
+                # field is reported as missing instead.
+                outcome.missing_fields.append(field_name)
+    uia_ready = bool(outcome.controls) and not outcome.missing_fields and not any(
+        item.confidence != "HIGH" for item in outcome.controls
+    )
+    unresolved = [
+        item.field for item in outcome.controls if item.confidence != "HIGH"
+    ] + outcome.missing_fields
     outcome.results.append(
         _result(
             "UIA_CONTROL_DISCOVERY",
@@ -440,13 +444,14 @@ async def discover_account(account: AccountConfig, adapter: Any) -> DiscoveryOut
             TestStatus.PASS if not unresolved else TestStatus.WARN,
             "UIA controls were discovered."
             if not unresolved
-            else "Some UIA controls need human confirmation.",
+            else "UI Automation did not resolve every login control.",
             detail=",".join(unresolved),
             action=(
-                "No UIA Automation IDs are available; the Win32 fallback addresses this "
-                "dialog by native control id, so do not apply empty selectors."
+                "UIA is not the route for this Account; the Win32 dialog fallback "
+                "addresses the same dialog by native control id."
                 if account.win32_fallback.enabled
-                else "Review candidates and explicitly apply selectors if appropriate."
+                else "Open the MT4 login dialog and run Detect again; review candidates "
+                "and apply selectors explicitly."
             ),
             severity=TestSeverity.HIGH,
             evidence={"control_count": len(outcome.controls), "needs_confirmation": unresolved},
@@ -473,19 +478,43 @@ async def discover_account(account: AccountConfig, adapter: Any) -> DiscoveryOut
     if account.win32_fallback.enabled:
         win32_result, win32_dialog_found = _win32_discovery(adapter, account, pids)
         outcome.results.append(win32_result)
-        if win32_dialog_found and not login_window_seen:
-            outcome.results.append(
-                _result(
-                    "UIA_LOGIN_WINDOW",
-                    "Login dialog discovery",
-                    TestStatus.PASS,
-                    "The login dialog is not exposed through UI Automation; it was "
-                    "located through the configured Win32 fallback.",
-                    detail="win32_fallback",
-                    action="Continue with Real Login; no UIA selectors are required.",
-                    severity=TestSeverity.HIGH,
-                )
+    outcome.route = "win32" if win32_dialog_found else ("uia" if uia_ready else "")
+    outcome.results.append(
+        _result(
+            "MT4_DISCOVERY_READY",
+            "Discovery readiness",
+            TestStatus.PASS if outcome.route else TestStatus.WARN,
+            "A reliable control route is available; Real Login can continue."
+            if outcome.route
+            else "No reliable control route was resolved; Real Login stays blocked.",
+            detail=f"route={outcome.route or 'none'}",
+            action=(
+                "Proceed to Real Login through the Win32 dialog."
+                if outcome.route == "win32"
+                else "Proceed to Real Login with the UIA selectors."
+                if outcome.route == "uia"
+                else "Open the MT4 login dialog, then run Detect again."
+            ),
+            severity=TestSeverity.HIGH,
+            evidence={
+                "route": outcome.route or "none",
+                "missing_fields": outcome.missing_fields,
+            },
+        )
+    )
+    if win32_dialog_found and not login_window_seen:
+        outcome.results.append(
+            _result(
+                "UIA_LOGIN_WINDOW",
+                "Login dialog discovery",
+                TestStatus.PASS,
+                "The login dialog is not exposed through UI Automation; it was "
+                "located through the configured Win32 fallback.",
+                detail="win32_fallback",
+                action="Continue with Real Login; no UIA selectors are required.",
+                severity=TestSeverity.HIGH,
             )
+        )
     duration = int((time.monotonic() - started) * 1000)
     outcome.results = [
         item.model_copy(update={"duration_ms": duration}) for item in outcome.results

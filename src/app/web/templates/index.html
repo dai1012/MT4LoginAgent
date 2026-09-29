@@ -53,14 +53,27 @@
           <label>Server<input id="account-server" required maxlength="128" placeholder="RakutenMT4"></label>
           <label class="wide">MT4 executable path<input id="account-terminal-path" required maxlength="1024" placeholder="C:\\Program Files\\Rakuten\\terminal.exe"></label>
           <label>Process name (optional)<input id="account-process-name" maxlength="128" placeholder="terminal.exe"></label>
-          <label>Profile path (required on Windows for instance disambiguation)<input id="account-profile-path" maxlength="1024" placeholder="C:\\RakutenProfiles\\A"></label>
-          <label>Login window title regex (required on Windows)<input id="account-window-regex" maxlength="256" placeholder="(?i)^.*login.*$"></label>
-          <label>Authenticated main-window title regex (anchored; required for verified Windows success)<input id="account-success-window-regex" maxlength="256" placeholder="^Rakuten .* authenticated$"></label>
+          <label>MT4 process working directory (cwd) — required on Windows to disambiguate instances; this is NOT the MT4 Data Folder / Open Data Folder<textarea id="account-profile-path" rows="1" maxlength="1024" placeholder="C:\\Program Files (x86)\\Rakuten MetaTrader 4"></textarea></label>
+          <label>Login window title regex (required on Windows)<input id="account-window-regex" maxlength="256" placeholder="^Rakuten MetaTrader 4$"></label>
+          <label>Authenticated main-window title regex (anchored; required for verified Windows success)<input id="account-success-window-regex" maxlength="256" placeholder="^Rakuten.*Demo - .* - Rakuten Securities, Inc\.$"><small class="muted">只锚定 broker / server / account 类型等稳定特征，不要写具体账号 ID、金额或会变的文字；带具体账号的标题会在账号变更后失效。</small></label>
           <label>Launch arguments (JSON array)<input id="account-launch-args" placeholder='["/portable"]'></label>
           <label class="checkbox"><input id="account-enabled" type="checkbox" checked> Enabled</label>
           <label class="checkbox"><input id="account-save-login" type="checkbox"> Save login information when UI provides it (off by default)</label>
           <label class="wide">UIA control IDs (required on Windows)<textarea id="account-control-ids" rows="2" placeholder='{"login_id":"loginIdEdit","otp":"passwordEdit","server":"serverCombo","login_button":"loginButton"}'></textarea></label>
           <label class="wide">UIA control titles (non-critical fields; Login/OTP/Server/Login require IDs)<textarea id="account-control-titles" rows="2" placeholder='{"save_login":"Save login"}'></textarea></label>
+          <fieldset class="wide">
+            <legend>Win32 dialog fallback (opt-in, for brokers whose login form UIA cannot see)</legend>
+            <p class="muted">仅当 Phase 2 Detect 显示 UIA 找不到登录框、但 Win32 能找到时才启用。启用后 Real Login 用原生 control id 驱动弹窗，UIA Automation ID 不再需要。</p>
+            <label class="checkbox"><input id="account-win32-enabled" type="checkbox"> 启用 Win32 dialog fallback</label>
+            <label>Dialog class<input id="account-win32-class" maxlength="128" placeholder="#32770"></label>
+            <label class="wide">Anchor texts（逗号分隔，用于确认这是登录框而不是同标题的其它对话框）<input id="account-win32-anchors" placeholder="ログインID :, サーバー :"></label>
+            <label>Login ID ComboBox id<input id="account-win32-id-login-id-combo" type="number" min="1" max="65535" placeholder="1181"></label>
+            <label>Login ID Edit id<input id="account-win32-id-login-id-edit" type="number" min="1" max="65535" placeholder="1001"></label>
+            <label>Password / OTP Edit id<input id="account-win32-id-otp" type="number" min="1" max="65535" placeholder="1220"></label>
+            <label>Server ComboBox id<input id="account-win32-id-server-combo" type="number" min="1" max="65535" placeholder="1293"></label>
+            <label>Server Edit id<input id="account-win32-id-server-edit" type="number" min="1" max="65535" placeholder="1001"></label>
+            <label>Login Button id<input id="account-win32-id-login-button" type="number" min="1" max="65535" placeholder="1"></label>
+          </fieldset>
           <div class="form-actions wide"><button type="button" class="button secondary" data-action="cancel-account">取消</button><button type="submit" class="button">保存 Account</button></div>
         </form>
       </div>

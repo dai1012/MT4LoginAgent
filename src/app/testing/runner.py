@@ -60,6 +60,8 @@ class TestRunner:
         self._report_dir: Path | None = None
         self._started_at = now_utc()
         self._completed_phases: set[TestPhase] = set()
+        self._phase_status: dict[TestPhase, str] = {}
+        self._discovery_route: str = ""
         self._security_scan: dict[str, bool] = {}
         self._slack_sessions: dict[str, tuple[str, Any]] = {}
 
@@ -87,9 +89,37 @@ class TestRunner:
             "report_id": self._report_id,
             "report_dir": str(self._report_dir) if self._report_dir else None,
             "completed_phases": [phase.value for phase in self._completed_phases],
+            "phase_status": {
+                phase.value: value for phase, value in self._phase_status.items()
+            },
+            "discovery_route": self._discovery_route,
             "results": [item.safe_dict() for item in self._results],
             "detected_controls": [item.model_dump(mode="json") for item in self._detected_controls],
         }
+
+    @staticmethod
+    def _verdict(results: list[TestResult]) -> str:
+        """Summarise a phase from its real results, not from the fact it ran."""
+        if not results:
+            return "not_run"
+        if any(item.status == TestStatus.FAIL for item in results):
+            return "fail"
+        if all(item.status == TestStatus.PASS for item in results):
+            return "pass"
+        return "warn"
+
+    def _record_phase(self, phase: TestPhase, results: list[TestResult]) -> None:
+        self._completed_phases.add(phase)
+        self._phase_status[phase] = self._verdict(results)
+
+    def _discovery_usable(self) -> bool:
+        """Phase 2 may continue when a reliable control route exists.
+
+        UIA stays primary. An explicitly opted-in Win32 dialog counts as an equally
+        reliable route, because a broker whose login form is not exposed to UIA can
+        never satisfy the UIA route.
+        """
+        return self._discovery_route in {"uia", "win32"}
 
     def _platform_commit(self) -> str:
         try:
@@ -230,7 +260,7 @@ class TestRunner:
                 results.extend(security_results)
                 results.extend(self._manual_checklist())
                 self._add(results)
-                self._completed_phases.add(phase)
+                self._record_phase(phase, results)
                 await self._write()
                 return results
             if phase == TestPhase.DISCOVERY:
@@ -256,13 +286,14 @@ class TestRunner:
                 self._detected_controls = outcome.controls
                 self._detected_account_id = account.id
                 self._diagnostic = outcome.diagnostic
-                self._completed_phases.add(phase)
+                self._discovery_route = outcome.route
+                self._record_phase(phase, outcome.results)
                 await self._write(uia_payload=outcome.diagnostic)
                 return outcome.results
             if phase == TestPhase.SLACK:
                 results = await run_slack_checks(self.runtime)
                 self._add(results)
-                self._completed_phases.add(phase)
+                self._record_phase(phase, results)
                 await self._write()
                 return results
             if phase in {TestPhase.REAL_LOGIN, TestPhase.GROUP}:
@@ -301,13 +332,17 @@ class TestRunner:
                             "Run Phase 1 and review failures first.",
                         )
                     ]
-                if TestPhase.DISCOVERY not in self._completed_phases:
+                if TestPhase.DISCOVERY not in self._completed_phases or (
+                    not self._discovery_usable()
+                ):
                     return [
                         self._manual(
                             "FULL_SLACK_PHASE2_REQUIRED",
                             "Full Slack E2E",
-                            "Run Phase 2 MT4 Discovery before starting Full Slack E2E.",
-                            "Select the Account and run Detect first.",
+                            "Run Phase 2 MT4 Discovery and confirm it resolved a usable "
+                            "control route first.",
+                            "Select the Account and run Detect; Real Login needs either "
+                            "UIA selectors or an enabled Win32 dialog fallback.",
                         )
                     ]
                 account = self.runtime.accounts.get(account_id)
@@ -335,22 +370,29 @@ class TestRunner:
                         "Start real login test.",
                     )
                 ]
-            if TestPhase.ENVIRONMENT not in self._completed_phases:
+            if TestPhase.ENVIRONMENT not in self._completed_phases or (
+                self._phase_status.get(TestPhase.ENVIRONMENT) == "fail"
+            ):
                 return [
                     self._manual(
                         "REAL_LOGIN_PHASE1_REQUIRED",
                         "Real login confirmation",
-                        "Real login is blocked until Phase 1 Environment completes.",
-                        "Run Phase 1 and review failures first.",
+                        "Real login is blocked until Phase 1 Environment passes without "
+                        "failures.",
+                        "Run Phase 1 and fix the failures first.",
                     )
                 ]
-            if TestPhase.DISCOVERY not in self._completed_phases:
+            if TestPhase.DISCOVERY not in self._completed_phases or (
+                not self._discovery_usable()
+            ):
                 return [
                     self._manual(
                         "REAL_LOGIN_PHASE2_REQUIRED",
                         "Real login confirmation",
-                        "Real login is blocked until Phase 2 MT4 Discovery completes.",
-                        "Select the Account and run Detect first.",
+                        "Real login is blocked until Phase 2 resolves a usable control "
+                        "route for this Account.",
+                        "Run Detect first. Real Login needs either resolved UIA selectors "
+                        "or an enabled Win32 dialog fallback.",
                     )
                 ]
             try:
@@ -399,7 +441,9 @@ class TestRunner:
                                 duration_ms=0,
                             )
                         )
-            except (CommandError, AppError, ValueError):
+            except (CommandError, AppError, ValueError) as exc:
+                # Report the stage and the exception type only. The message itself can
+                # echo an Account or broker value, so it is never included.
                 result = TestResult(
                     id="REAL_LOGIN_SUBMIT_FAILED",
                     category=TestCategory.REAL_LOGIN,
@@ -407,7 +451,13 @@ class TestRunner:
                     status=TestStatus.FAIL,
                     severity=TestSeverity.HIGH,
                     message="The login request could not be submitted.",
-                    suggested_action="Review the Account configuration and Agent status.",
+                    technical_detail=(
+                        f"stage=queue_submit; error_type={type(exc).__name__}"
+                    ),
+                    suggested_action=(
+                        "Check whether the Account already has a login in progress, "
+                        "whether the queue is full, or whether the Agent is shutting down."
+                    ),
                 )
                 self._add([result])
                 await self._write(otp=otp)
@@ -617,6 +667,16 @@ class TestRunner:
         if self._detected_account_id != account_id:
             return {"applied": False, "reason": "Run discovery for this Account first."}
         account = self.runtime.accounts.get(account_id)
+        if not controls:
+            return {"applied": False, "reason": "No detected selectors were supplied."}
+        if account.win32_fallback.enabled:
+            return {
+                "applied": False,
+                "reason": (
+                    "This Account drives MT4 through the Win32 dialog fallback, so UIA "
+                    "Automation IDs are not applied."
+                ),
+            }
         detected = apply_confirmed_selectors(account, controls)
         if detected is None:
             return {"applied": False, "reason": "Some required selectors are not HIGH confidence."}

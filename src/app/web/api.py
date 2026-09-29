@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import Response
 
 from app.accounts.validator import validate_account_configuration
 from app.models.api import (
@@ -333,5 +334,8 @@ def install_web_routes(app, runtime: AgentRuntime) -> None:
         return FileResponse(template, media_type="text/html")
 
     @app.get("/favicon.ico", include_in_schema=False)
-    async def favicon() -> JSONResponse:
-        return JSONResponse(status_code=204, content=None)
+    async def favicon() -> Response:
+        # A 204 must carry no body at all. Returning JSON content here renders a
+        # 4-byte "null" body against a 204 with no Content-Length, which uvicorn
+        # rejects with "Response content longer than Content-Length".
+        return Response(status_code=204)

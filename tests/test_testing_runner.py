@@ -6,7 +6,14 @@ import sys
 import pytest
 
 from app.models.domain import AccountCreate, GroupCreate
-from app.testing.models import DetectedControl, TestPhase, TestStatus
+from app.testing.models import (
+    DetectedControl,
+    TestCategory,
+    TestPhase,
+    TestResult,
+    TestSeverity,
+    TestStatus,
+)
 from app.testing.mt4_discovery import apply_confirmed_selectors, discover_account, selector_diff
 from app.testing.runner import TestRunner
 from tests.support import account_values
@@ -46,7 +53,7 @@ class _FakeAdapter:
 
     def __init__(self, title, control_type="Edit"):
         self._window = _FakeWindow(title)
-        self._control = _FakeControl(control_type=control_type)
+        self._control = _FakeControl(control_type=control_type) if control_type else None
 
     def _process_ids(self, account):
         return [27784]
@@ -61,6 +68,8 @@ class _FakeAdapter:
         return "handle:1"
 
     def _visible_controls(self, window, control_type):
+        if self._control is None:
+            return []
         if control_type != self._control.element_info.control_type:
             return []
         return [self._control]
@@ -233,6 +242,10 @@ async def test_full_slack_mode_creates_manual_session_without_otp(runtime, monke
     monkeypatch.setattr(type(runner), "windows_available", property(lambda self: True))
     await runner.run_phase(TestPhase.ENVIRONMENT)
     await runner.run_phase(TestPhase.DISCOVERY, account_id=account.id)
+    # Precondition under test: Real Login needs a resolved control route, not
+    # merely a Phase 2 that ran. Discovery cannot resolve UIA controls off
+    # Windows, so the route is established explicitly here.
+    runner._discovery_route = "uia"
     results = await runner.run_real_login(
         account.id, "", confirmed=True, broker_confirmed=True, full_slack=True
     )
@@ -257,6 +270,10 @@ async def test_full_slack_result_times_out_without_claiming_success(runtime, mon
     monkeypatch.setattr(type(runner), "windows_available", property(lambda self: True))
     await runner.run_phase(TestPhase.ENVIRONMENT)
     await runner.run_phase(TestPhase.DISCOVERY, account_id=account.id)
+    # Precondition under test: Real Login needs a resolved control route, not
+    # merely a Phase 2 that ran. Discovery cannot resolve UIA controls off
+    # Windows, so the route is established explicitly here.
+    runner._discovery_route = "uia"
     results = await runner.run_real_login(
         account.id, "", confirmed=True, broker_confirmed=True, full_slack=True
     )
@@ -282,6 +299,10 @@ async def test_full_slack_await_can_be_cancelled(runtime, monkeypatch):
     monkeypatch.setattr(type(runner), "windows_available", property(lambda self: True))
     await runner.run_phase(TestPhase.ENVIRONMENT)
     await runner.run_phase(TestPhase.DISCOVERY, account_id=account.id)
+    # Precondition under test: Real Login needs a resolved control route, not
+    # merely a Phase 2 that ran. Discovery cannot resolve UIA controls off
+    # Windows, so the route is established explicitly here.
+    runner._discovery_route = "uia"
     results = await runner.run_real_login(
         account.id, "", confirmed=True, broker_confirmed=True, full_slack=True
     )
@@ -340,3 +361,170 @@ def test_selector_application_requires_all_high_confidence_controls(runtime):
     runner = TestRunner(runtime)
     runner._detected_account_id = "another-account"
     assert runner.apply_selectors(account.id, controls, confirmed=True)["applied"] is False
+
+
+# A phase that merely ran is not a phase that passed.
+
+
+@pytest.mark.asyncio
+async def test_real_login_is_blocked_when_phase_2_ran_without_a_usable_route(runtime, monkeypatch):
+    runner = TestRunner(runtime)
+    monkeypatch.setattr(type(runner), "windows_available", property(lambda self: True))
+    account = runtime.accounts.create(
+        account_create(
+            {"display_name": "A", "alias": "A", "login_id": "local-id", "server": "server"}
+        )
+    )
+    await runner.run_phase(TestPhase.ENVIRONMENT)
+    # Environment legitimately fails off Windows; isolate the Phase 2 gate here.
+    runner._phase_status[TestPhase.ENVIRONMENT] = "pass"
+    await runner.run_phase(TestPhase.DISCOVERY, account_id=account.id)
+    assert TestPhase.DISCOVERY.value in runner.status()["completed_phases"]
+
+    results = await runner.run_real_login(
+        account.id, "123456", confirmed=True, broker_confirmed=True
+    )
+    assert results[0].id == "REAL_LOGIN_PHASE2_REQUIRED"
+    assert results[0].status == TestStatus.MANUAL
+    assert "control route" in results[0].message
+
+
+@pytest.mark.asyncio
+async def test_real_login_is_blocked_when_phase_1_has_a_failure(runtime, monkeypatch):
+    runner = TestRunner(runtime)
+    monkeypatch.setattr(type(runner), "windows_available", property(lambda self: True))
+    account = runtime.accounts.create(
+        account_create(
+            {"display_name": "A", "alias": "A", "login_id": "local-id", "server": "server"}
+        )
+    )
+    await runner.run_phase(TestPhase.DISCOVERY, account_id=account.id)
+    runner._discovery_route = "uia"
+    await runner.run_phase(TestPhase.ENVIRONMENT)
+    runner._phase_status[TestPhase.ENVIRONMENT] = "fail"
+
+    results = await runner.run_real_login(
+        account.id, "123456", confirmed=True, broker_confirmed=True
+    )
+    assert results[0].id == "REAL_LOGIN_PHASE1_REQUIRED"
+
+
+@pytest.mark.asyncio
+async def test_phase_status_separates_completion_from_agreement(runtime, monkeypatch):
+    runner = TestRunner(runtime)
+    monkeypatch.setattr(type(runner), "windows_available", property(lambda self: True))
+    account = runtime.accounts.create(
+        account_create(
+            {"display_name": "A", "alias": "A", "login_id": "local-id", "server": "server"}
+        )
+    )
+    await runner.run_phase(TestPhase.ENVIRONMENT)
+    status = runner.status()
+    assert TestPhase.ENVIRONMENT.value in status["completed_phases"]
+    assert status["phase_status"][TestPhase.ENVIRONMENT.value] in {"pass", "warn", "fail"}
+    assert status["discovery_route"] == ""
+
+    await runner.run_phase(TestPhase.DISCOVERY, account_id=account.id)
+    runner._discovery_route = "win32"
+    assert runner.status()["discovery_route"] == "win32"
+    assert runner._discovery_usable() is True
+
+
+def test_verdict_reports_fail_warn_and_pass():
+    def make(status):
+        return TestResult(
+            id="X",
+            category=TestCategory.MT4_DISCOVERY,
+            name="x",
+            status=status,
+            severity=TestSeverity.LOW,
+        )
+
+    assert TestRunner._verdict([]) == "not_run"
+    assert TestRunner._verdict([make(TestStatus.PASS)]) == "pass"
+    assert TestRunner._verdict([make(TestStatus.PASS), make(TestStatus.WARN)]) == "warn"
+    assert TestRunner._verdict([make(TestStatus.WARN), make(TestStatus.FAIL)]) == "fail"
+
+
+# Apply detected selectors must fail closed.
+
+
+def _high_controls():
+    return [
+        DetectedControl(field=field, automation_id=f"{field}Id", confidence="HIGH")
+        for field in ("login_id", "otp", "server", "login_button")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_apply_selectors_is_closed_without_detected_controls(runtime):
+    runner = TestRunner(runtime)
+    account = runtime.accounts.create(
+        account_create(
+            {"display_name": "A", "alias": "A", "login_id": "local-id", "server": "server"}
+        )
+    )
+    runner._detected_account_id = account.id
+    result = runner.apply_selectors(account.id, [], confirmed=True)
+    assert result["applied"] is False
+    assert "No detected selectors" in result["reason"]
+
+
+@pytest.mark.asyncio
+async def test_apply_selectors_is_closed_for_a_win32_fallback_account(runtime):
+    runner = TestRunner(runtime)
+    account = runtime.accounts.create(
+        account_create(
+            {
+                "display_name": "A",
+                "alias": "A",
+                "login_id": "local-id",
+                "server": "server",
+                "win32_fallback": {
+                    "enabled": True,
+                    "control_ids": {
+                        "login_id_edit": 1001,
+                        "otp": 1220,
+                        "login_button": 1,
+                    },
+                },
+            }
+        )
+    )
+    runner._detected_account_id = account.id
+    result = runner.apply_selectors(account.id, _high_controls(), confirmed=True)
+    assert result["applied"] is False
+    assert "Win32" in result["reason"]
+    assert account.control_ids.get("login_id") == "loginIdEdit"
+
+
+# Discovery must not invent detected rows for controls it never found.
+
+
+@pytest.mark.asyncio
+async def test_discovery_does_not_fabricate_placeholder_controls(runtime, monkeypatch):
+    import sys
+
+    import app.testing.mt4_discovery as discovery
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    account = runtime.accounts.create(
+        account_create(
+            {
+                "display_name": "A",
+                "alias": "A",
+                "login_id": "local-id",
+                "server": "server",
+                "window_title_regex": r"^Rakuten MetaTrader 4$",
+            }
+        )
+    )
+    outcome = await discovery.discover_account(
+        account, _FakeAdapter("Nothing", control_type=None)
+    )
+    assert outcome.controls == []
+    assert set(outcome.missing_fields) == {"login_id", "otp", "server", "login_button"}
+    assert outcome.route == ""
+    ready = next(item for item in outcome.results if item.id == "MT4_DISCOVERY_READY")
+    assert ready.status == TestStatus.WARN
+    assert ready.technical_detail == "route=none"

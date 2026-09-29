@@ -60,10 +60,24 @@
   function renderAccounts() {
     $("#accounts-table").innerHTML = state.accounts.length ? `<table><thead><tr><th>Name</th><th>Alias</th><th>Login ID</th><th>Server</th><th>状态</th><th>操作</th></tr></thead><tbody>${state.accounts.map((a) => `<tr><td>${esc(a.display_name)}</td><td><code>${esc(a.alias)}</code></td><td>${esc(a.login_id)}</td><td>${esc(a.server)}</td><td>${a.enabled ? badge("enabled") : badge("disabled")}</td><td><div class="actions"><button data-action="edit-account" data-id="${esc(a.id)}">编辑</button><button data-action="validate-account" data-id="${esc(a.id)}">Test</button><button data-action="toggle-account" data-id="${esc(a.id)}" data-enabled="${a.enabled}">${a.enabled ? "Disable" : "Enable"}</button><button class="danger" data-action="delete-account" data-id="${esc(a.id)}">删除</button></div></td></tr>`).join("")}</tbody></table>` : `<div class="empty">尚未配置 Account。使用“新增 Account”开始。</div>`;
   }
-  function resetAccountForm() { $("#account-form").reset(); $("#account-id").value = ""; $("#account-enabled").checked = true; $("#account-save-login").checked = false; $("#account-editor").classList.add("hidden"); }
-  function fillAccountForm(a) { $("#account-editor-title").textContent = `编辑 ${a.alias}`; $("#account-id").value = a.id; $("#account-display-name").value = a.display_name; $("#account-alias").value = a.alias; $("#account-login-id").value = a.login_id; $("#account-server").value = a.server; $("#account-terminal-path").value = a.terminal_path; $("#account-process-name").value = a.process_name || ""; $("#account-profile-path").value = a.profile_path || ""; $("#account-window-regex").value = a.window_title_regex || ""; $("#account-success-window-regex").value = a.success_window_title_regex || ""; $("#account-launch-args").value = JSON.stringify(a.launch_arguments || []); $("#account-control-ids").value = JSON.stringify(a.control_ids || {}, null, 2); $("#account-control-titles").value = JSON.stringify(a.control_titles || {}, null, 2); $("#account-enabled").checked = a.enabled; $("#account-save-login").checked = a.save_login_info; $("#account-editor").classList.remove("hidden"); }
+  function resetAccountForm() { $("#account-form").reset(); $("#account-id").value = ""; $("#account-enabled").checked = true; $("#account-save-login").checked = false; loadWin32Fallback(null); $("#account-win32-enabled").checked = false; $("#account-editor").classList.add("hidden"); }
+  const WIN32_ID_KEYS = ["login_id_combo", "login_id_edit", "otp", "server_combo", "server_edit", "login_button"];
+  function win32IdField(key) { return $(`#account-win32-id-${key.replace(/_/g, "-")}`); }
+  function loadWin32Fallback(config) {
+    const c = config || {};
+    $("#account-win32-enabled").checked = !!c.enabled;
+    $("#account-win32-class").value = c.dialog_class || "";
+    $("#account-win32-anchors").value = (c.anchors || []).join(", ");
+    WIN32_ID_KEYS.forEach((key) => { const el = win32IdField(key); if (el) el.value = (c.control_ids && c.control_ids[key]) || ""; });
+  }
+  function collectWin32Fallback() {
+    const controlIds = {};
+    WIN32_ID_KEYS.forEach((key) => { const el = win32IdField(key); if (!el || el.value === "") return; const n = Number(el.value); if (Number.isInteger(n) && n > 0) controlIds[key] = n; });
+    return { enabled: $("#account-win32-enabled").checked, dialog_class: $("#account-win32-class").value.trim() || "#32770", anchors: $("#account-win32-anchors").value.split(",").map((s) => s.trim()).filter(Boolean), control_ids: controlIds };
+  }
+  function fillAccountForm(a) { $("#account-editor-title").textContent = `编辑 ${a.alias}`; $("#account-id").value = a.id; $("#account-display-name").value = a.display_name; $("#account-alias").value = a.alias; $("#account-login-id").value = a.login_id; $("#account-server").value = a.server; $("#account-terminal-path").value = a.terminal_path; $("#account-process-name").value = a.process_name || ""; $("#account-profile-path").value = a.profile_path || ""; $("#account-window-regex").value = a.window_title_regex || ""; $("#account-success-window-regex").value = a.success_window_title_regex || ""; $("#account-launch-args").value = JSON.stringify(a.launch_arguments || []); $("#account-control-ids").value = JSON.stringify(a.control_ids || {}, null, 2); $("#account-control-titles").value = JSON.stringify(a.control_titles || {}, null, 2); $("#account-enabled").checked = a.enabled; $("#account-save-login").checked = a.save_login_info; loadWin32Fallback(a.win32_fallback); $("#account-editor").classList.remove("hidden"); }
   function parseJson(value, fallback) { if (!value.trim()) return fallback; try { return JSON.parse(value); } catch (_) { throw new Error("JSON 格式无效"); } }
-  async function saveAccount(event) { event.preventDefault(); try { const payload = { display_name: $("#account-display-name").value, alias: $("#account-alias").value, login_id: $("#account-login-id").value, server: $("#account-server").value, terminal_path: $("#account-terminal-path").value, process_name: $("#account-process-name").value || null, profile_path: $("#account-profile-path").value || null, window_title_regex: $("#account-window-regex").value || null, success_window_title_regex: $("#account-success-window-regex").value || null, launch_arguments: parseJson($("#account-launch-args").value, []), control_ids: parseJson($("#account-control-ids").value, {}), control_titles: parseJson($("#account-control-titles").value, {}), enabled: $("#account-enabled").checked, save_login_info: $("#account-save-login").checked }; const id = $("#account-id").value; if (id) await api(`/accounts/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(payload) }); else await api("/accounts", { method: "POST", body: JSON.stringify(payload) }); resetAccountForm(); await loadCatalog(); toast("Account 已保存"); } catch (error) { toast(error.message, true); } }
+  async function saveAccount(event) { event.preventDefault(); try { const payload = { display_name: $("#account-display-name").value, alias: $("#account-alias").value, login_id: $("#account-login-id").value, server: $("#account-server").value, terminal_path: $("#account-terminal-path").value, process_name: $("#account-process-name").value || null, profile_path: $("#account-profile-path").value || null, window_title_regex: $("#account-window-regex").value || null, success_window_title_regex: $("#account-success-window-regex").value || null, launch_arguments: parseJson($("#account-launch-args").value, []), control_ids: parseJson($("#account-control-ids").value, {}), control_titles: parseJson($("#account-control-titles").value, {}), enabled: $("#account-enabled").checked, save_login_info: $("#account-save-login").checked, win32_fallback: collectWin32Fallback() }; const id = $("#account-id").value; if (id) await api(`/accounts/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(payload) }); else await api("/accounts", { method: "POST", body: JSON.stringify(payload) }); resetAccountForm(); await loadCatalog(); toast("Account 已保存"); } catch (error) { toast(error.message, true); } }
   function renderGroups() { const select = $("#group-members"); const selected = new Set(Array.from(select.selectedOptions).map((o) => o.value)); select.innerHTML = state.accounts.map((a) => `<option value="${esc(a.id)}" ${selected.has(a.id) ? "selected" : ""}>${esc(a.alias)} — ${esc(a.display_name)}</option>`).join(""); $("#groups-list").innerHTML = state.groups.length ? state.groups.map((g) => `<article class="panel group-card"><div class="section-heading"><div><h3>${esc(g.name)} ${g.enabled ? badge("enabled") : badge("disabled")}</h3><p class="muted">${g.accounts.length} 个账号 · 按顺序执行 · ${g.shared_otp_confirmed ? "shared OTP 已确认" : "shared OTP 未确认，Group 登录会被阻止"}</p></div><div class="actions"><button data-action="edit-group" data-id="${esc(g.id)}">编辑</button><button class="danger" data-action="delete-group" data-id="${esc(g.id)}">删除</button></div></div><div class="group-members">${g.accounts.length ? g.accounts.map((a, i) => `<span class="member-chip"><strong>${i + 1}. ${esc(a.alias)}</strong>${a.enabled === false ? badge("disabled") : ""}${i > 0 ? `<button title="上移" data-action="group-up" data-id="${esc(g.id)}" data-index="${i}">↑</button>` : ""}${i < g.accounts.length - 1 ? `<button title="下移" data-action="group-down" data-id="${esc(g.id)}" data-index="${i}">↓</button>` : ""}</span>`).join("") : `<span class="muted">没有成员</span>`}</div></article>`).join("") : `<div class="panel empty">尚未配置 Group</div>`; }
   function resetGroupForm() { $("#group-form").reset(); $("#group-id").value = ""; $("#group-enabled").checked = true; $("#group-shared-otp").checked = false; $("#group-editor").classList.add("hidden"); }
   function fillGroupForm(g) { $("#group-editor-title").textContent = `编辑 ${g.name}`; $("#group-id").value = g.id; $("#group-name").value = g.name; $("#group-enabled").checked = g.enabled; $("#group-shared-otp").checked = g.shared_otp_confirmed; const select = $("#group-members"); const byId = new Map(state.accounts.map((a) => [a.id, a])); const ordered = g.account_ids.map((id) => byId.get(id)).filter(Boolean).concat(state.accounts.filter((a) => !g.account_ids.includes(a.id))); select.innerHTML = ordered.map((a) => `<option value="${esc(a.id)}" ${g.account_ids.includes(a.id) ? "selected" : ""}>${esc(a.alias)} — ${esc(a.display_name)}</option>`).join(""); $("#group-editor").classList.remove("hidden"); }
@@ -75,16 +89,23 @@
   async function handleAction(button) { const action = button.dataset.action; try { if (action === "set-admin-token") { await setAdminToken(); } else if (action === "refresh-test-status") { await loadTestStatus(); } else if (action === "run-test-environment") { await runTestPhase("environment"); } else if (action === "run-test-discovery") { await runTestPhase("discovery", $("#test-account").value || null); } else if (action === "run-test-slack") { await runTestPhase("slack"); } else if (action === "run-test-real-login") { await runRealLoginTest(); } else if (action === "run-test-full-slack") { await runFullSlackTest(); } else if (action === "await-test-slack") { await awaitTestSlack(); } else if (action === "run-test-group") { await runGroupTest(); } else if (action === "apply-test-selectors") { await applyTestSelectors(); } else if (action === "view-report") { await viewReport(button.dataset.filename); } else if (action === "select-test-report") { await selectTestReport(button.dataset.reportId); } else if (action === "refresh-dashboard") { renderDashboard(await api("/dashboard")); } else if (action === "refresh-history") { renderHistory(await api("/history?limit=500"), "#history-table"); } else if (action === "new-account") { resetAccountForm(); $("#account-editor").classList.remove("hidden"); } else if (action === "cancel-account") { resetAccountForm(); } else if (action === "edit-account") { fillAccountForm(state.accounts.find((a) => a.id === button.dataset.id)); } else if (action === "validate-account") { const result = await api(`/accounts/${encodeURIComponent(button.dataset.id)}/validate`, { method: "POST" }); toast(result.valid ? "配置检查通过（Windows 路径存在性仍需实机确认）" : `配置检查未通过：${result.checks.filter((c) => !c.passed).map((c) => c.detail).join("；")}`, !result.valid); } else if (action === "toggle-account") { await api(`/accounts/${encodeURIComponent(button.dataset.id)}/enabled`, { method: "POST", body: JSON.stringify({ enabled: button.dataset.enabled !== "true" }) }); await loadCatalog(); } else if (action === "delete-account") { if (!confirm("确定删除这个 Account？关联 Group 会自动移除它。")) return; await api(`/accounts/${encodeURIComponent(button.dataset.id)}`, { method: "DELETE" }); await loadCatalog(); } else if (action === "new-group") { resetGroupForm(); $("#group-members").innerHTML = state.accounts.map((a) => `<option value="${esc(a.id)}">${esc(a.alias)} — ${esc(a.display_name)}</option>`).join(""); $("#group-editor").classList.remove("hidden"); } else if (action === "cancel-group") { resetGroupForm(); } else if (action === "edit-group") { fillGroupForm(state.groups.find((g) => g.id === button.dataset.id)); } else if (action === "delete-group") { if (!confirm("确定删除这个 Group？")) return; await api(`/groups/${encodeURIComponent(button.dataset.id)}`, { method: "DELETE" }); await loadCatalog(); } else if (action === "group-up") { await moveMember(button.dataset.id, Number(button.dataset.index), -1); } else if (action === "group-down") { await moveMember(button.dataset.id, Number(button.dataset.index), 1); } else if (action === "test-slack") { const result = await api("/slack/test", { method: "POST" }); toast(result.message, !result.ok); } } catch (error) { toast(error.message, true); } }
   const TEST_STEPS = [
     { key: "environment", label: "Step 1 Environment", requires: [], unlock: "点 Run Phase 1，检查环境、配置和 Account 静态完整性。不需要 OTP。" },
-    { key: "discovery", label: "Step 2 MT4 Detect", requires: ["environment"], unlock: "选好测试 Account 后点 Detect。这是确定真实 Automation ID 的唯一机会，不需要 OTP。" },
+    { key: "discovery", label: "Step 2 MT4 Detect", requires: ["environment"], unlock: "选好测试 Account，保持 MT4 登录窗可见后点 Detect。不需要 OTP。UIA 找不到时会自动尝试已启用的 Win32 dialog fallback。" },
     { key: "slack", label: "Step 3 Slack", requires: ["environment"], unlock: "点 Run Phase 3 验证 Slack 命令链路，不需要 OTP。" },
     { key: "real_login", label: "Step 4 Real Login", requires: ["environment", "discovery"], unlock: "整个流程第一次使用真实 OTP。先确认券商不处于 maintenance/offline，并勾选两个确认框。" },
     { key: "group", label: "Step 5 Group", requires: ["environment", "discovery", "real_login"], unlock: "最后才做。Group 需要 shared_otp_confirmed，并按成员数准备一次性 OTP。" },
   ];
   function testStepState(data) {
     const done = new Set((data && data.completed_phases) || []);
-    return TEST_STEPS.map((step) => ({ ...step, done: done.has(step.key) }));
+    const verdicts = (data && data.phase_status) || {};
+    const route = (data && data.discovery_route) || "";
+    return TEST_STEPS.map((step) => {
+      const ran = done.has(step.key);
+      const verdict = verdicts[step.key] || "not_run";
+      const usable = ran && (step.key !== "discovery" || route === "uia" || route === "win32");
+      return { ...step, ran, verdict, usable, route };
+    });
   }
-  function missingSteps(steps, keys) { return keys.filter((key) => !(steps.find((s) => s.key === key) || {}).done); }
+  function missingSteps(steps, keys) { return keys.filter((key) => !(steps.find((s) => s.key === key) || {}).usable); }
   function stepLabels(steps, keys) { return keys.map((key) => (steps.find((s) => s.key === key) || {}).label || key).join(" 和 "); }
   function requireSteps(stepKey, action) {
     const steps = testStepState(state.testStatus);
@@ -99,20 +120,26 @@
     state.testStatus = data;
     const bar = $("#test-steps"); const hint = $("#test-next-hint");
     const steps = testStepState(data);
-    const currentIndex = steps.findIndex((s) => !s.done);
+    const currentIndex = steps.findIndex((s) => !s.usable);
     if (bar) bar.innerHTML = steps.map((step, index) => {
       const missing = missingSteps(steps, step.requires);
-      const stateText = step.done ? "已完成" : missing.length ? `待完成 ${stepLabels(steps, missing)}` : "当前可执行";
-      const mark = step.done ? badge("PASS") : index === currentIndex ? badge("WARN") : `<span class="muted">未开始</span>`;
+      let stateText; let mark;
+      if (step.usable && step.verdict === "fail") { stateText = "已运行但有失败"; mark = badge("FAIL"); }
+      else if (step.usable) { stateText = step.verdict === "pass" ? "已通过" : "已完成（有提示）"; mark = badge(step.verdict === "pass" ? "PASS" : "WARN"); }
+      else if (step.ran) { stateText = "已运行，但未解析出可用路径"; mark = badge("WARN"); }
+      else if (missing.length) { stateText = `待完成 ${stepLabels(steps, missing)}`; mark = index === currentIndex ? badge("WARN") : `<span class="muted">未开始</span>`; }
+      else { stateText = "当前可执行"; mark = badge("WARN"); }
       return `<div class="card"><div class="card-label">${esc(step.label)}</div><div class="card-value">${mark}</div><div class="muted">${esc(stateText)}</div></div>`;
     }).join("");
     if (!hint) return;
-    if (currentIndex === -1) { hint.innerHTML = `<strong>5 个 Step 全部完成。</strong> 报告已生成在 data-dir 的 <code>reports/&lt;run-id&gt;/</code>。任何无法真机确认的项仍须保持 <code>WINDOWS_REAL_TEST_REQUIRED</code>，不得手动改成 success。`; return; }
+    const route = (data && data.discovery_route) || "";
+    const routeText = route === "win32" ? "当前 Real Login 走 Win32 dialog fallback（UIA Automation ID 不需要）。" : route === "uia" ? "当前 Real Login 走 UIA selectors。" : "";
+    if (currentIndex === -1) { hint.innerHTML = `<strong>5 个 Step 全部完成。</strong> ${esc(routeText)} 报告已生成在 data-dir 的 <code>reports/&lt;run-id&gt;/</code>。任何无法真机确认的项仍须保持 <code>WINDOWS_REAL_TEST_REQUIRED</code>，不得手动改成 success。`; return; }
     const step = steps[currentIndex];
     const missing = missingSteps(steps, step.requires);
-    hint.innerHTML = missing.length
+    hint.innerHTML = (routeText ? `<strong>${esc(routeText)}</strong> ` : "") + (missing.length
       ? `<strong>下一步：${esc(step.label)}</strong> — 尚未解锁，请先完成 ${esc(stepLabels(steps, missing))}。${esc(step.unlock)}`
-      : `<strong>下一步：${esc(step.label)}</strong> — ${esc(step.unlock)}`;
+      : `<strong>下一步：${esc(step.label)}</strong> — ${esc(step.unlock)}`);
   }
   function renderTestStatus(data) {
     renderTestGuide(data);
@@ -126,8 +153,12 @@
     const resultNode = $("#test-results");
     if (resultNode) resultNode.innerHTML = results.length ? `<table><thead><tr><th>Phase/Test</th><th>Status</th><th>Observed</th><th>Action</th></tr></thead><tbody>${results.map((r) => `<tr class="test-result-row"><td><code>${esc(r.id)}</code><br>${esc(r.name)}</td><td>${badge(r.status)}</td><td>${esc(r.message)}</td><td>${esc(r.suggested_action || "—")}</td></tr>`).join("")}</tbody></table>` : `<div class="empty">尚未运行 Windows Acceptance Test。</div>`;
     const controls = data.detected_controls || [];
+    const route = (data && data.discovery_route) || "";
+    const allHigh = controls.length > 0 && controls.every((c) => c.confidence === "HIGH");
+    const canApply = allHigh && route === "uia";
+    const applyNote = route === "win32" ? "当前 Account 走 Win32 dialog fallback，不需要应用 UIA Automation ID。" : allHigh ? "" : "没有全部为 HIGH confidence 的 selector，无法安全应用。";
     const controlsNode = $("#test-controls");
-    if (controlsNode) controlsNode.innerHTML = controls.length ? `<h4>Detected UIA candidates</h4><table><thead><tr><th>Field</th><th>AutomationId</th><th>Type</th><th>Password</th><th>Confidence</th></tr></thead><tbody>${controls.map((c) => `<tr><td>${esc(c.field)}</td><td>${esc(c.automation_id || "—")}</td><td>${esc(c.control_type || "—")}</td><td>${c.is_password ? "yes" : "no"}</td><td>${badge(c.confidence === "HIGH" ? "PASS" : "MANUAL")}</td></tr>`).join("")}</tbody></table><button class="button secondary" data-action="apply-test-selectors">Apply detected selectors</button>` : "";
+    if (controlsNode) controlsNode.innerHTML = controls.length ? `<h4>Detected UIA candidates</h4><table><thead><tr><th>Field</th><th>AutomationId</th><th>Type</th><th>Password</th><th>Confidence</th></tr></thead><tbody>${controls.map((c) => `<tr><td>${esc(c.field)}</td><td>${esc(c.automation_id || "—")}</td><td>${esc(c.control_type || "—")}</td><td>${c.is_password ? "yes" : "no"}</td><td>${badge(c.confidence === "HIGH" ? "PASS" : "MANUAL")}</td></tr>`).join("")}</tbody></table>${canApply ? `<button class="button secondary" data-action="apply-test-selectors">Apply detected selectors</button>` : `<p class="muted">${esc(applyNote)}</p>`}` : "";
     const reportsNode = $("#test-reports");
     if (reportsNode && data.report_id) reportsNode.innerHTML = `<div class="test-report-links"><span class="muted">Report ${esc(data.report_id)}</span><button class="button secondary" data-action="view-report" data-filename="report.html">View HTML</button><button class="button secondary" data-action="view-report" data-filename="report.json">Export JSON</button></div>`;
   }

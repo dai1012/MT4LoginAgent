@@ -207,10 +207,13 @@ Bot token 正确不代表 `/mt4` 已注册；如果命令没有反应，检查 M
 - Login ID：只保存在本机，不通过 Slack 发送。
 - Server：MT4 Server。
 - MT4 executable path：Windows 绝对路径。
-- Profile path：用于区分同一台机器上的多个 MT4 实例。
+- Process working directory（cwd）：**Windows 必填**，用于区分同一台机器上的多个 MT4 实例。代码把它和 MT4 进程的当前工作目录比较（psutil `cwd()`），**不是** MT4 的 Data Folder / File → Open Data Folder。
+  Rakuten MT4 正常启动时它的 cwd 就是 exe 所在目录，例如 `C:\Program Files (x86)\Rakuten MetaTrader 4`。
 - Login window title regex：明确登录窗口，例如 `(?i)^.*login.*$`。
 - Authenticated main-window title regex：必须锚定，例如 `^Rakuten .*authenticated$`。
 - UIA `control_ids`：至少 `login_id`、`otp`、`server`、`login_button` 四个明确 Automation ID。
+- `success_window_title_regex`：只锚定 broker / server / account 类型等**稳定特征**（例如 `^Rakuten.*Demo - .* - Rakuten Securities, Inc\.$`）。不要写具体账号 ID、金额或会变的文字，否则账号一改就会失效。
+- **Win32 dialog fallback（可选，默认关闭）**：某些券商的登录框是普通 Win32 `#32770` 对话框，UIA 根本看不到。此时在 Account 表单的 Win32 区域勾选启用并填入 `dialog_class`、anchor 文案和 6 个原生 control id。启用后 Phase 2 会用原生 id 定位弹窗，Real Login 也不再需要 UIA Automation ID。
 - `save_login_info` 默认关闭；只有确认 UI 不会保存 OTP 时才打开。若 Windows worker 被硬终止，登录窗口可能暂时保留已填字段，需人工关闭并轮换 OTP。
 
 `control_titles` 只用于非关键字段（例如 Save checkbox）；关键登录字段不接受模糊标题匹配。
@@ -397,7 +400,7 @@ python3.11 -m venv .venv
 
 - Rakuten MT4 登录窗口 Automation ID、名称和类型。
 - ValuePattern/InvokePattern 是否可用。
-- Profile 目录、进程 cwd、32/64 位和权限组合。
+- 进程 cwd 组合、32/64 位和权限组合。
 - 锚定认证主窗口标题和状态变化。
 - 错误/过期 OTP、broker offline、maintenance、冻结账户文案。
 - Slack 真实 App 安装、Socket Mode 重连和 Bot 频道权限。

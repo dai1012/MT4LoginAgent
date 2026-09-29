@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import socket
 
 import pytest
@@ -135,3 +136,105 @@ def test_account_can_be_disabled(client, account_payload):
         client.post(f"/api/accounts/{account['id']}/enabled", json={"enabled": False}).status_code
         == 200
     )
+
+
+def test_favicon_returns_a_bodyless_204(client):
+    """A 204 must not carry a rendered body.
+
+    Returning JSON with a 204 renders b"null" against a response that declares no
+    Content-Length, which uvicorn rejects with "Response content longer than
+    Content-Length".
+    """
+    response = client.get("/favicon.ico")
+    assert response.status_code == 204
+    assert response.content == b""
+    lowered = {key.lower() for key in response.headers}
+    assert "content-type" not in lowered
+
+
+def test_account_win32_fallback_round_trips_through_the_api(client):
+    from tests.support import account_values
+
+    win32 = {
+        "enabled": True,
+        "dialog_class": "#32770",
+        "anchors": ["ログインID :", "サーバー :"],
+        "control_ids": {
+            "login_id_combo": 1181,
+            "login_id_edit": 1001,
+            "otp": 1220,
+            "server_combo": 1293,
+            "server_edit": 1001,
+            "login_button": 1,
+        },
+    }
+    created = client.post(
+        "/api/accounts",
+        json={
+            **account_values(),
+            "display_name": "Rakuten-Win32",
+            "alias": "W",
+            "win32_fallback": win32,
+        },
+    )
+    assert created.status_code == 201, created.text
+    account = created.json()
+    assert account["win32_fallback"] == win32
+
+    fetched = client.get(f"/api/accounts/{account['id']}").json()
+    assert fetched["win32_fallback"] == win32
+
+    updated = client.put(f"/api/accounts/{account['id']}", json={"display_name": "Renamed"})
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["win32_fallback"] == win32
+
+    # The Win32 block must carry only dialog/class/anchor/id data, never secrets.
+    assert set(win32["control_ids"]) == {
+        "login_id_combo", "login_id_edit", "otp", "server_combo", "server_edit", "login_button",
+    }
+    assert "secrets" not in fetched
+    assert "password" not in json_key_blob(fetched["win32_fallback"])
+
+
+def test_account_rejects_win32_fallback_without_required_control_ids(client):
+    from tests.support import account_values
+
+    response = client.post(
+        "/api/accounts",
+        json={
+            **account_values(),
+            "display_name": "Bad",
+            "alias": "B",
+            "win32_fallback": {"enabled": True, "control_ids": {"otp": 1220}},
+        },
+    )
+    assert response.status_code == 422
+    assert "win32_fallback requires control_ids" in response.text
+
+
+def test_account_rejects_unknown_win32_control_keys(client):
+    from tests.support import account_values
+
+    response = client.post(
+        "/api/accounts",
+        json={
+            **account_values(),
+            "display_name": "Bad",
+            "alias": "C",
+            "win32_fallback": {
+                "enabled": True,
+                "control_ids": {
+                    "login_id_edit": 1001,
+                    "otp": 1220,
+                    "login_button": 1,
+                    "secret": 7,
+                },
+            },
+        },
+    )
+    assert response.status_code == 422
+    assert "unsupported Win32 control keys" in response.text
+
+
+def json_key_blob(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True).casefold()
