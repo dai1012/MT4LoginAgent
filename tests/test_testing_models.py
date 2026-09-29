@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
+from app.models.domain import AppSettings
 from app.testing.models import (
     TestCategory,
     TestReport,
@@ -41,3 +45,9 @@ def test_test_result_and_report_serialization_and_overall():
     payload = report.safe_dict()
     assert payload["results"][0]["status"] == "PASS"
     assert "test-report" in payload["report_id"]
+
+
+def test_agent_stale_cutoff_is_not_broker_validity():
+    assert AppSettings().otp_max_age_seconds == 120
+    with pytest.raises(ValidationError):
+        AppSettings(otp_max_age_seconds=900)

@@ -37,6 +37,13 @@ def test_windows_batch_files_use_crlf():
         assert b"\n" not in data.replace(b"\r\n", b"")
 
 
+def test_install_script_prefers_python_312_then_311_without_arbitrary_fallback():
+    text = (Path(__file__).parents[1] / "install.bat").read_text(encoding="utf-8")
+    assert text.index("py -3.12") < text.index("py -3.11")
+    assert 'set "PY_CMD=py -3"' not in text
+    assert "does not fall back" in text
+
+
 def test_local_runtime_data_paths_are_ignored_but_examples_are_not():
     import subprocess
 

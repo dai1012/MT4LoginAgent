@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.models.domain import AccountCreate, AccountPatch, GroupCreate
+from app.models.domain import AccountCreate, AccountPatch, GroupCreate, GroupPatch
 from app.models.errors import ConflictError, DomainValidationError, NotFoundError
 
 
@@ -66,6 +66,9 @@ def test_group_crud_order_and_delete_purges_account(runtime, account_payload):
         AccountCreate.model_validate({**account_payload, "alias": "B", "login_id": "B"})
     )
     group = runtime.groups.create(GroupCreate(name="GROUP1", account_ids=[a.id, b.id]))
+    assert group.shared_otp_confirmed is False
+    confirmed = runtime.groups.update(group.id, GroupPatch(shared_otp_confirmed=True))
+    assert confirmed.shared_otp_confirmed is True
     assert [item.alias for item in runtime.groups.accounts_for(group)] == ["A", "B"]
     reordered = runtime.groups.reorder(group.id, [b.id, a.id])
     assert reordered.account_ids == [b.id, a.id]

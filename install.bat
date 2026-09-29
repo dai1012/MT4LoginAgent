@@ -10,24 +10,31 @@ echo.
 where py >nul 2>nul
 if errorlevel 1 (
   echo [ERROR] Python Launcher ^(py.exe^) was not found.
-  echo Install Python 3.11+ from https://www.python.org/downloads/windows/
+  echo Install Python 3.12 ^(recommended^) from https://www.python.org/downloads/windows/
   echo Enable the Python Launcher and try again.
   pause
   exit /b 1
 )
 
-py -3 -V
-py -3 -c "import sys; raise SystemExit(0 if sys.version_info ^>= (3,11) else 1)" >nul 2>nul
-if errorlevel 1 (
-  echo [ERROR] Python 3.11+ is required ^(py -3 did not pass^).
-  echo Install Python 3.11 or newer and run this file again.
+set "PY_CMD="
+py -3.12 -V >nul 2>nul
+if not errorlevel 1 set "PY_CMD=py -3.12"
+if not defined PY_CMD (
+  py -3.11 -V >nul 2>nul
+  if not errorlevel 1 set "PY_CMD=py -3.11"
+)
+if not defined PY_CMD (
+  echo [ERROR] Python 3.12 or 3.11 was not found.
+  echo Install Python 3.12 ^(recommended^) or 3.11 from https://www.python.org/downloads/windows/
+  echo The installer does not fall back to an arbitrary py -3 interpreter.
   pause
   exit /b 1
 )
+%PY_CMD% -V
 
 if not exist ".venv\Scripts\python.exe" (
-  echo Creating local virtual environment...
-  py -3 -m venv .venv
+  echo Creating local virtual environment with %PY_CMD%...
+  %PY_CMD% -m venv .venv
   if errorlevel 1 (
     echo [ERROR] Could not create .venv.
     pause

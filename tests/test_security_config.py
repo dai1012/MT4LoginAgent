@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import asdict
 
+import pytest
 from pydantic import SecretStr
 
 from app.config.repositories import SecretsRepository, SettingsRepository
@@ -112,3 +114,39 @@ def test_atomic_settings_round_trip(tmp_path):
     repo = SettingsRepository(paths)
     repo.set(AppSettings(allowed_slack_user_ids=["U123456789"]))
     assert SettingsRepository(paths).get().allowed_slack_user_ids == ["U123456789"]
+
+
+def test_legacy_otp_max_age_from_previous_schema_does_not_block_startup(tmp_path, caplog):
+    from app.config.paths import AppPaths
+
+    paths = AppPaths(tmp_path)
+    paths.ensure()
+    paths.settings_file.write_text('{"otp_max_age_seconds": 900}\n', encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING):
+        settings = SettingsRepository(paths).get()
+
+    assert settings.otp_max_age_seconds == 300
+    assert "not Rakuten broker OTP validity" in caplog.text
+
+
+def test_legacy_migration_does_not_widen_the_model_stale_cutoff_cap():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        AppSettings(otp_max_age_seconds=900)
+
+
+@pytest.mark.parametrize("value", [29, 901])
+def test_otp_max_age_outside_the_previous_schema_still_fails_loudly(tmp_path, value):
+    from app.config.paths import AppPaths
+    from app.models.errors import ConfigurationError
+
+    paths = AppPaths(tmp_path)
+    paths.ensure()
+    paths.settings_file.write_text(
+        json.dumps({"otp_max_age_seconds": value}) + "\n", encoding="utf-8"
+    )
+
+    with pytest.raises(ConfigurationError):
+        SettingsRepository(paths).get()

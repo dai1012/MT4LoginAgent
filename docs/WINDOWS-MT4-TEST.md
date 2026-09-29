@@ -26,13 +26,13 @@ Destructive cases                   MANUAL_TEST_REQUIRED
 
 Test Runner 默认不会输入 OTP、启动真实登录或向真实 Slack 批量发消息。Real Login 和 Group 必须在 Web UI 中明确确认；Full Slack E2E 由用户自己发送 `/mt4 A <OTP>`，Test Runner 只等待并关联结果。
 
-每次运行会在 runtime data 目录生成：
+每次 Test Runner 运行会在 runtime data 目录生成 report.html、report.json 和 logs-sanitized.txt；只有在 Phase 2 实际执行 MT4/UIA Discovery 时，才会额外生成 uia-tree-sanitized.json：
 
 ```text
 reports/<run-id>/report.html
 reports/<run-id>/report.json
-reports/<run-id>/uia-tree-sanitized.json
 reports/<run-id>/logs-sanitized.txt
+reports/<run-id>/uia-tree-sanitized.json   # 仅 Phase 2 实际发现时
 ```
 
 报告不包含 OTP、Slack token、Local admin token、HMAC key 或未脱敏 Login ID。报告可以直接提供给开发者分析。
@@ -49,7 +49,7 @@ reports/<run-id>/logs-sanitized.txt
 
 ## 1. 自动化测试已验证的项目
 
-这些项目在 macOS/Linux CI 中已覆盖，但不代表 Windows UI 真实成功：
+这些项目已在本机 macOS/Linux 环境用 pytest 覆盖，但不代表 Windows UI 真实成功：
 
 - [x] Account/Group CRUD、alias 冲突、删除回滚。
 - [x] Slack command 解析、allowlist 顺序、重复 delivery digest、ack 失败释放 key。
@@ -62,7 +62,7 @@ reports/<run-id>/logs-sanitized.txt
 ## 2. 第一次安装和 Web Admin
 
 - [ ] `git clone` 或解压完整 `MT4LoginAgent/`。
-- [ ] 双击 `install.bat`；记录 Python 版本，确认 import self-check 通过（优先 3.11/3.12；3.13/3.14 需额外实机验证）。
+- [ ] 双击 `install.bat`；记录 Python 版本，确认 import self-check 通过（脚本严格按 3.12→3.11 选择）。
 - [ ] 确认 `install.bat`/`start.bat` 在 Windows 上以 CRLF 执行正常。
 - [ ] 双击 `start.bat`。
 - [ ] 确认控制台显示 Local admin token；不要把它写入文件或 URL。
@@ -102,7 +102,9 @@ Windows 上以下字段全部是硬性要求：
 
 准备本次真实 OTP 后执行：
 
+- [ ] 开始真实 OTP 测试前，人工确认 Rakuten 当前不处于已知 maintenance/offline 时段；当前没有 broker preflight。
 - [ ] `/mt4 A <OTP>` 立即收到“处理中”。
+- [ ] Group 登录前确认 `shared_otp_confirmed`，只对已确认属于允许共享同一 OTP 的同一身份范围使用 Group。
 - [ ] A 未运行时，Agent 启动正确 terminal.exe/Profile。
 - [ ] A 已运行时，Agent 找到唯一正确进程/Profile；多个匹配必须报 ambiguous/instance unverifiable。
 - [ ] Server 先于 Login ID/OTP 选择并回读一致。
@@ -129,6 +131,8 @@ Windows 上以下字段全部是硬性要求：
 ## 7. Group 顺序和部分失败
 
 - [ ] 创建 `GROUP1`，成员顺序为 A → B → C。
+- [ ] 明确确认这些成员属于允许共享同一 Rakuten OTP 的同一身份范围，并设置 `shared_otp_confirmed=true`；否则 Group 登录必须被拒绝。
+- [ ] 开始真实 Group OTP 测试前，人工确认 Rakuten 不处于已知 maintenance/offline 时段；当前没有 broker preflight。
 - [ ] `/mt4 GROUP1 <OTP>` 按 A → B → C 执行。
 - [ ] 让中间账号失败，确认后续账号仍执行。
 - [ ] Slack 收到每个账号独立结果。
@@ -158,6 +162,6 @@ Windows 上以下字段全部是硬性要求：
 - spawn 子进程中的 COM apartment 行为。
 - DPI、UAC、32/64 位和 Profile cwd 组合。
 - 真实 Slack App/Command/Channel 权限。
-- OTP 的真实有效期与 `otp_max_age_seconds` 默认值的匹配度。
+- Rakuten broker OTP 的签发时间、首次登录 2 分钟规则，以及同一身份多设备/多账户共享规则；`otp_max_age_seconds` 只用于 Agent stale-request cutoff。
 
 任何一项无法确认时，保持 `WINDOWS_REAL_TEST_REQUIRED`，不要手动放宽为 success。

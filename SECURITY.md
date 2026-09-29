@@ -70,6 +70,9 @@
 - HTML/JSON 报告只保存布尔型 `secret_leak_detected`；报告目录和文件使用本地私有权限，Windows 实际 ACL 仍需实机确认。
 - 故意错误 OTP、kill 进程、多实例、改系统时间、UAC、网络中断等破坏性测试默认是 `MANUAL_TEST_REQUIRED`。
 - macOS/Linux 页面和 CLI 只能显示 `NOT_RUN`/`WINDOWS_REAL_TEST_REQUIRED`，不能显示真实 Windows PASS。
+- `otp_max_age_seconds` 是 Agent stale-request cutoff，不是 Rakuten broker OTP validity；Agent 不知道 OTP 签发时间，也不做 broker preflight。
+- 旧 schema 允许 `otp_max_age_seconds` 到 900。迁移在 repository 边界完成：301..900 下调为上限 300 并记录警告，不把旧值当作新的有效时长；模型本身仍拒绝 900，避免以后有人把语义静默改宽。超出旧 schema 区间的值继续报错。
+- Group 只有在用户明确设置 `shared_otp_confirmed` 后才允许执行；多设备/多账户共享规则不由 Agent 猜测。
 
 
 ## Reporting

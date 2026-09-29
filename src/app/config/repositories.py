@@ -1,13 +1,50 @@
 from __future__ import annotations
 
+import logging
 import threading
 
 from pydantic import SecretStr, ValidationError
 
 from app.config.paths import AppPaths
 from app.config.storage import AtomicJsonStorage
-from app.models.domain import AccountConfig, AccountGroup, AppSettings, SecretsConfig
+from app.models.domain import (
+    LEGACY_OTP_MAX_AGE_MAX_SECONDS,
+    OTP_STALE_CUTOFF_MAX_SECONDS,
+    AccountConfig,
+    AccountGroup,
+    AppSettings,
+    SecretsConfig,
+)
 from app.models.errors import ConfigurationError
+
+logger = logging.getLogger(__name__)
+
+
+def migrate_legacy_settings(raw: object) -> object:
+    """Accept settings.json written before the stale-cutoff cap was tightened.
+
+    ``otp_max_age_seconds`` used to allow up to 900. It has always been an
+    Agent-side cutoff rather than broker OTP validity, so a legacy value above the
+    current cap is clamped down with a warning instead of blocking startup. Values
+    outside the previous schema's own range are left untouched and still fail
+    validation loudly, so real typos are never silently rewritten.
+    """
+    if not isinstance(raw, dict):
+        return raw
+    value = raw.get("otp_max_age_seconds")
+    if isinstance(value, bool) or not isinstance(value, int):
+        return raw
+    if not OTP_STALE_CUTOFF_MAX_SECONDS < value <= LEGACY_OTP_MAX_AGE_MAX_SECONDS:
+        return raw
+    logger.warning(
+        "settings.json: otp_max_age_seconds=%s was valid under the previous schema but "
+        "exceeds the Agent stale-request cutoff cap of %s; clamping to %s. This is an "
+        "Agent-side cutoff, not Rakuten broker OTP validity.",
+        value,
+        OTP_STALE_CUTOFF_MAX_SECONDS,
+        OTP_STALE_CUTOFF_MAX_SECONDS,
+    )
+    return {**raw, "otp_max_age_seconds": OTP_STALE_CUTOFF_MAX_SECONDS}
 
 
 class AccountRepository:
@@ -101,7 +138,7 @@ class SettingsRepository:
             if self._value is None:
                 raw = self.storage.load(dict)
                 try:
-                    self._value = AppSettings.model_validate(raw)
+                    self._value = AppSettings.model_validate(migrate_legacy_settings(raw))
                 except Exception as exc:
                     raise ConfigurationError("Invalid settings.json") from exc
             return self._value.model_copy(deep=True)

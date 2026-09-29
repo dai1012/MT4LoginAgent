@@ -275,11 +275,22 @@ class TestRunner:
         otp: str,
         *,
         confirmed: bool = False,
+        broker_confirmed: bool = False,
         full_slack: bool = False,
     ) -> list[TestResult]:
         async with self._lock:
             if not self.windows_available:
                 return [self._not_run_real("REAL_LOGIN_WINDOWS_REQUIRED")]
+            if not broker_confirmed:
+                return [
+                    self._manual(
+                        "REAL_LOGIN_BROKER_CONFIRMATION_REQUIRED",
+                        "Broker readiness confirmation",
+                        "Manually confirm Rakuten is not in a known maintenance/offline window.",
+                        "There is no broker preflight; confirm the current broker state "
+                        "before OTP testing.",
+                    )
+                ]
             if full_slack:
                 if TestPhase.ENVIRONMENT not in self._completed_phases:
                     return [
@@ -469,10 +480,21 @@ class TestRunner:
         otp: str,
         *,
         confirmed: bool = False,
+        broker_confirmed: bool = False,
     ) -> list[TestResult]:
         async with self._lock:
             if not self.windows_available:
                 return [self._not_run_real("GROUP_WINDOWS_REQUIRED", TestCategory.GROUP)]
+            if not broker_confirmed:
+                return [
+                    self._manual(
+                        "GROUP_BROKER_CONFIRMATION_REQUIRED",
+                        "Broker readiness confirmation",
+                        "Manually confirm Rakuten is not in a known maintenance/offline window.",
+                        "There is no broker preflight; confirm the current broker state "
+                        "before Group OTP testing.",
+                    )
+                ]
             if not confirmed:
                 return [
                     self._manual(

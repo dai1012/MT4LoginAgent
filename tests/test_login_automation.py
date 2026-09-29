@@ -11,6 +11,7 @@ from app.models.domain import (
     AccountConfig,
     AccountCreate,
     AutomationResult,
+    ErrorCategory,
     GroupCreate,
     GroupPatch,
     LoginRequest,
@@ -20,6 +21,11 @@ from app.models.domain import (
 from app.models.errors import ConfigurationError, DomainValidationError
 from app.mt4.factory import build_automation
 from app.mt4.mock_automation import MockAutomation
+from tests.support import account_values
+
+
+def account_create(values):
+    return AccountCreate.model_validate({**account_values(), **values})
 
 
 def make_account(outcome="success", alias="A") -> AccountConfig:
@@ -29,7 +35,7 @@ def make_account(outcome="success", alias="A") -> AccountConfig:
             "alias": alias,
             "login_id": "local-id",
             "server": "demo-server",
-            "terminal_path": r"C:\Rakuten\terminal.exe",
+            "terminal_path": account_values()["terminal_path"],
             "mock_outcome": outcome,
         }
     )
@@ -49,31 +55,33 @@ async def test_mock_success_failure_timeout():
 @pytest.mark.asyncio
 async def test_group_partial_failure_and_history_never_contains_otp(runtime, tmp_path):
     runtime.accounts.create(
-        AccountCreate.model_validate(
+        account_create(
             {
                 "display_name": "A",
                 "alias": "A",
                 "login_id": "local-a",
                 "server": "demo",
-                "terminal_path": r"C:\Rakuten\terminal.exe",
                 "mock_outcome": "failure",
             }
         )
     )
     runtime.accounts.create(
-        AccountCreate.model_validate(
+        account_create(
             {
                 "display_name": "B",
                 "alias": "B",
                 "login_id": "local-b",
                 "server": "demo",
-                "terminal_path": r"C:\Rakuten\terminal.exe",
                 "mock_outcome": "success",
             }
         )
     )
     group = runtime.groups.create(
-        GroupCreate(name="GROUP1", account_ids=[a.id for a in runtime.accounts.list()])
+        GroupCreate(
+            name="GROUP1",
+            account_ids=[a.id for a in runtime.accounts.list()],
+            shared_otp_confirmed=True,
+        )
     )
     results = []
     done = asyncio.Event()
@@ -115,28 +123,107 @@ async def test_group_partial_failure_and_history_never_contains_otp(runtime, tmp
 
 
 @pytest.mark.asyncio
-async def test_group_stops_using_an_otp_after_it_expires_mid_group(runtime, monkeypatch):
-    for alias in ("A", "B"):
+async def test_unconfirmed_group_shared_otp_is_rejected_before_automation(runtime):
+    account = runtime.accounts.create(
+        account_create(
+            {
+                "display_name": "A",
+                "alias": "A",
+                "login_id": "id",
+                "server": "server",
+            }
+        )
+    )
+    group = runtime.groups.create(GroupCreate(name="GROUP1", account_ids=[account.id]))
+    with pytest.raises(DomainValidationError, match="shared_otp_confirmed"):
+        runtime.login_service.submit(
+            LoginRequest(sender_id="U1", target=group.name, otp=SecretStr("1234"), source="test")
+        )
+    assert runtime.login_service.active_job_count == 0
+
+
+@pytest.mark.asyncio
+async def test_group_shared_otp_continues_after_first_success(runtime, monkeypatch):
+    for alias in ("A", "B", "C"):
         runtime.accounts.create(
-            AccountCreate.model_validate(
+            account_create(
                 {
                     "display_name": alias,
                     "alias": alias,
                     "login_id": f"local-{alias}",
                     "server": "demo",
-                    "terminal_path": r"C:\Rakuten\terminal.exe",
                 }
             )
         )
     group = runtime.groups.create(
-        GroupCreate(name="GROUP1", account_ids=[a.id for a in runtime.accounts.list()])
+        GroupCreate(
+            name="GROUP1",
+            account_ids=[a.id for a in runtime.accounts.list()],
+            shared_otp_confirmed=True,
+        )
     )
+    calls = []
 
-    async def slow_login(_account, _otp):
+    async def slow_login(account, _otp):
+        calls.append(account.alias)
         await asyncio.sleep(0.03)
         return AutomationResult(status=LoginStatus.SUCCESS, message="ok")
 
     monkeypatch.setattr(runtime.login_service.automation, "login", slow_login)
+    runtime.login_service.otp_max_age_seconds = 0.01
+    results = []
+    done = asyncio.Event()
+
+    async def callback(items):
+        results.extend(items)
+        done.set()
+
+    request = LoginRequest(
+        sender_id="U1111111111", target=group.name, otp=SecretStr("123456"), source="test"
+    )
+    runtime.login_service.submit(request, callback)
+    await asyncio.wait_for(done.wait(), timeout=2)
+    assert [item.status for item in results] == [LoginStatus.SUCCESS] * 3
+    assert calls == ["A", "B", "C"]
+    assert request.otp.get_secret_value() == ""
+    assert "123456" not in runtime.paths.history_file.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("first_status", [LoginStatus.FAILED, LoginStatus.TIMEOUT])
+@pytest.mark.asyncio
+async def test_group_does_not_continue_after_cutoff_without_first_success(
+    runtime, monkeypatch, first_status
+):
+    for alias in ("A", "B"):
+        runtime.accounts.create(
+            account_create(
+                {
+                    "display_name": alias,
+                    "alias": alias,
+                    "login_id": f"local-{alias}",
+                    "server": "demo",
+                }
+            )
+        )
+    group = runtime.groups.create(
+        GroupCreate(
+            name="GROUP1",
+            account_ids=[a.id for a in runtime.accounts.list()],
+            shared_otp_confirmed=True,
+        )
+    )
+    calls = []
+
+    async def slow_failure(account, _otp):
+        calls.append(account.alias)
+        await asyncio.sleep(0.03)
+        return AutomationResult(
+            status=first_status,
+            category=ErrorCategory.LOGIN_REJECTED,
+            message="failed",
+        )
+
+    monkeypatch.setattr(runtime.login_service.automation, "login", slow_failure)
     runtime.login_service.otp_max_age_seconds = 0.01
     results = []
     done = asyncio.Event()
@@ -152,20 +239,20 @@ async def test_group_stops_using_an_otp_after_it_expires_mid_group(runtime, monk
         callback,
     )
     await asyncio.wait_for(done.wait(), timeout=2)
-    assert results[0].status == LoginStatus.SUCCESS
+    assert calls == ["A"]
+    assert results[0].status == first_status
     assert results[1].error_category.value == "otp_expired"
 
 
 @pytest.mark.asyncio
 async def test_disabled_account_is_failed_and_does_not_start_automation(runtime):
     account = runtime.accounts.create(
-        AccountCreate.model_validate(
+        account_create(
             {
                 "display_name": "A",
                 "alias": "A",
                 "login_id": "id",
                 "server": "server",
-                "terminal_path": r"C:\Rakuten\terminal.exe",
                 "enabled": False,
             }
         )
@@ -189,24 +276,22 @@ async def test_disabled_account_is_failed_and_does_not_start_automation(runtime)
 @pytest.mark.asyncio
 async def test_queued_job_reloads_account_state_before_execution(runtime):
     account = runtime.accounts.create(
-        AccountCreate.model_validate(
+        account_create(
             {
                 "display_name": "A",
                 "alias": "A",
                 "login_id": "id",
                 "server": "server",
-                "terminal_path": r"C:\Rakuten\terminal.exe",
             }
         )
     )
     second_account = runtime.accounts.create(
-        AccountCreate.model_validate(
+        account_create(
             {
                 "display_name": "B",
                 "alias": "B",
                 "login_id": "id-b",
                 "server": "server",
-                "terminal_path": r"C:\Rakuten\terminal.exe",
             }
         )
     )
@@ -271,13 +356,12 @@ async def test_queued_job_reloads_account_state_before_execution(runtime):
 @pytest.mark.asyncio
 async def test_login_queue_rejects_excess_jobs(runtime):
     account = runtime.accounts.create(
-        AccountCreate.model_validate(
+        account_create(
             {
                 "display_name": "A",
                 "alias": "A",
                 "login_id": "id",
                 "server": "server",
-                "terminal_path": r"C:\Rakuten\terminal.exe",
             }
         )
     )
@@ -327,13 +411,12 @@ async def test_login_queue_rejects_excess_jobs(runtime):
 @pytest.mark.asyncio
 async def test_same_account_cannot_be_submitted_while_pending(runtime):
     account = runtime.accounts.create(
-        AccountCreate.model_validate(
+        account_create(
             {
                 "display_name": "A",
                 "alias": "A",
                 "login_id": "id",
                 "server": "server",
-                "terminal_path": r"C:\Rakuten\terminal.exe",
             }
         )
     )
@@ -382,13 +465,12 @@ async def test_same_account_cannot_be_submitted_while_pending(runtime):
 @pytest.mark.asyncio
 async def test_expired_queued_otp_is_not_sent_to_automation(runtime):
     account = runtime.accounts.create(
-        AccountCreate.model_validate(
+        account_create(
             {
                 "display_name": "A",
                 "alias": "A",
                 "login_id": "id",
                 "server": "server",
-                "terminal_path": r"C:\Rakuten\terminal.exe",
             }
         )
     )
@@ -437,20 +519,23 @@ async def test_expired_queued_otp_is_not_sent_to_automation(runtime):
 async def test_cancelled_job_sends_completion_for_remaining_accounts(runtime):
     accounts = [
         runtime.accounts.create(
-            AccountCreate.model_validate(
+            account_create(
                 {
                     "display_name": alias,
                     "alias": alias,
                     "login_id": alias,
                     "server": "server",
-                    "terminal_path": r"C:\Rakuten\terminal.exe",
                 }
             )
         )
         for alias in ("A", "B")
     ]
     group = runtime.groups.create(
-        GroupCreate(name="GROUP1", account_ids=[item.id for item in accounts])
+        GroupCreate(
+            name="GROUP1",
+            account_ids=[item.id for item in accounts],
+            shared_otp_confirmed=True,
+        )
     )
 
     class BlockingAutomation:
@@ -494,24 +579,22 @@ async def test_cancelled_job_sends_completion_for_remaining_accounts(runtime):
 @pytest.mark.asyncio
 async def test_queued_account_target_does_not_execute_replacement_group(runtime):
     account = runtime.accounts.create(
-        AccountCreate.model_validate(
+        account_create(
             {
                 "display_name": "A",
                 "alias": "A",
                 "login_id": "a",
                 "server": "server",
-                "terminal_path": r"C:\Rakuten\terminal.exe",
             }
         )
     )
     replacement = runtime.accounts.create(
-        AccountCreate.model_validate(
+        account_create(
             {
                 "display_name": "B",
                 "alias": "B",
                 "login_id": "b",
                 "server": "server",
-                "terminal_path": r"C:\Rakuten\terminal.exe",
             }
         )
     )
@@ -566,20 +649,23 @@ async def test_queued_account_target_does_not_execute_replacement_group(runtime)
 async def test_group_member_removal_does_not_skip_later_members(runtime):
     accounts = [
         runtime.accounts.create(
-            AccountCreate.model_validate(
+            account_create(
                 {
                     "display_name": alias,
                     "alias": alias,
                     "login_id": alias,
                     "server": "server",
-                    "terminal_path": r"C:\Rakuten\terminal.exe",
                 }
             )
         )
         for alias in ("A", "B", "C")
     ]
     group = runtime.groups.create(
-        GroupCreate(name="GROUP1", account_ids=[item.id for item in accounts])
+        GroupCreate(
+            name="GROUP1",
+            account_ids=[item.id for item in accounts],
+            shared_otp_confirmed=True,
+        )
     )
 
     class BlockingAutomation:

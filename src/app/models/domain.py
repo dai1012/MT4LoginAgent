@@ -215,6 +215,7 @@ class AccountGroup(APIModel):
     id: str = Field(default_factory=new_id, min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=64)
     account_ids: list[str] = Field(default_factory=list, max_length=1000)
+    shared_otp_confirmed: bool = False
     enabled: bool = True
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
@@ -239,13 +240,24 @@ class AccountGroup(APIModel):
 class GroupCreate(APIModel):
     name: str = Field(min_length=1, max_length=64)
     account_ids: list[str] = Field(default_factory=list, max_length=1000)
+    shared_otp_confirmed: bool = False
     enabled: bool = True
 
 
 class GroupPatch(APIModel):
     name: str | None = Field(default=None, min_length=1, max_length=64)
     account_ids: list[str] | None = Field(default=None, max_length=1000)
+    shared_otp_confirmed: bool | None = None
     enabled: bool | None = None
+
+
+# Bounds for the Agent-side stale-request cutoff. This is not broker OTP validity:
+# the Agent cannot know when Rakuten issued the OTP.
+OTP_STALE_CUTOFF_MIN_SECONDS = 30
+OTP_STALE_CUTOFF_MAX_SECONDS = 300
+# The previous schema allowed otp_max_age_seconds up to 900. settings.json files
+# written under it are migrated at the repository boundary, never reinterpreted.
+LEGACY_OTP_MAX_AGE_MAX_SECONDS = 900
 
 
 class AppSettings(APIModel):
@@ -253,7 +265,14 @@ class AppSettings(APIModel):
     slack_enabled: bool = True
     automation_mode: AutomationMode = AutomationMode.AUTO
     web_port: int = Field(default=8765, ge=1024, le=65535)
-    otp_max_age_seconds: int = Field(default=300, ge=30, le=900)
+    # Agent-side stale-request cutoff only; the broker's OTP issuance/validity
+    # is not knowable from a Slack delivery timestamp.
+    otp_max_age_seconds: int = Field(
+        default=120,
+        ge=OTP_STALE_CUTOFF_MIN_SECONDS,
+        le=OTP_STALE_CUTOFF_MAX_SECONDS,
+        description="Agent stale-request cutoff; not broker OTP validity",
+    )
 
     @field_validator("allowed_slack_user_ids")
     @classmethod

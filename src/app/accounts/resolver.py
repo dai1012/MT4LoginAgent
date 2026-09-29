@@ -14,6 +14,7 @@ class ResolvedTarget:
     name: str
     target_id: str
     accounts: tuple[AccountConfig, ...]
+    shared_otp_confirmed: bool = False
 
 
 class TargetResolver:
@@ -40,12 +41,20 @@ class TargetResolver:
                     f"Target '{normalized}' is both an account alias and a group name; rename one"
                 )
             if account is not None:
-                return ResolvedTarget("account", account.alias, account.id, (account,))
+                return ResolvedTarget(
+                    "account", account.alias, account.id, (account,), shared_otp_confirmed=True
+                )
             if group is not None:
                 if not group.enabled:
                     raise DomainValidationError(f"Group '{group.name}' is disabled")
                 accounts = self.groups.accounts_for(group)
                 if not accounts:
                     raise DomainValidationError(f"Group '{group.name}' has no accounts")
-                return ResolvedTarget("group", group.name, group.id, tuple(accounts))
+                return ResolvedTarget(
+                    "group",
+                    group.name,
+                    group.id,
+                    tuple(accounts),
+                    shared_otp_confirmed=group.shared_otp_confirmed,
+                )
             raise NotFoundError(f"Alias or group '{normalized}' does not exist")

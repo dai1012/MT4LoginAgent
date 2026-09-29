@@ -15,9 +15,16 @@ import webbrowser
 from contextlib import suppress
 
 from app.config.paths import AppPaths
+from app.config.repositories import SettingsRepository
 from app.runtime import build_runtime
 from app.testing.models import TestPhase
 from app.testing.runner import TestRunner
+
+
+def web_url_for_data_dir(data_dir: str | None) -> str:
+    paths = AppPaths.from_value(data_dir)
+    port = SettingsRepository(paths).get().web_port
+    return f"http://127.0.0.1:{port}/#windows-test"
 
 
 def _open_web_after_delay(url: str) -> None:
@@ -31,7 +38,7 @@ def _open_web_after_delay(url: str) -> None:
 def _run_web(data_dir: str | None) -> None:
     import app.main
 
-    _open_web_after_delay("http://127.0.0.1:8765/#windows-test")
+    _open_web_after_delay(web_url_for_data_dir(data_dir))
     sys.argv = ["app.main", "--data-dir", str(data_dir or AppPaths.resolve_default().data_dir)]
     app.main.run()
 

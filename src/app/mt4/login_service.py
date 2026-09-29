@@ -45,13 +45,15 @@ class LoginService:
         history: HistoryStore,
         *,
         max_jobs: int = 16,
-        otp_max_age_seconds: int = 300,
+        otp_max_age_seconds: int = 120,
     ) -> None:
         self.resolver = resolver
         self.automation = automation
         self.history = history
         self.max_jobs = max(1, max_jobs)
-        self.otp_max_age_seconds = min(900, max(30, otp_max_age_seconds))
+        # This is the Agent's stale-request cutoff, not a broker OTP validity
+        # guarantee. The broker's issuance time is unavailable to the Agent.
+        self.otp_max_age_seconds = min(300, max(30, otp_max_age_seconds))
         self._tasks: set[asyncio.Task[None]] = set()
         self._task_account_ids: dict[asyncio.Task[None], set[str]] = {}
         self._pending_account_ids: set[str] = set()
@@ -92,6 +94,11 @@ class LoginService:
             raise DomainValidationError("Login service is shutting down")
         # Resolve before acknowledgement so unknown aliases can be rejected immediately.
         resolved = self.validate_target(request.target)
+        if resolved.kind == "group" and not resolved.shared_otp_confirmed:
+            raise DomainValidationError(
+                "Group login is blocked until shared_otp_confirmed is set; "
+                "the Agent cannot infer Rakuten shared-OTP rules"
+            )
         if len(self._tasks) >= self.max_jobs:
             raise DomainValidationError("Login queue is full; wait for active jobs to finish")
         account_ids = {account.id for account in resolved.accounts}
@@ -135,13 +142,21 @@ class LoginService:
         items: list[LoginExecutionItem] = []
         cancelled = False
         processed_ids: set[str] = set()
+        # Rakuten may allow the same broker password to continue across related MT4
+        # accounts after the first successful login. Keep that exception local to this
+        # Group job; it is never persisted and never applies to a single Account.
+        shared_otp_established = False
         try:
             with sensitive_values(otp_value):
                 async with self._run_lock:
                     self._running += 1
                     try:
                         for snapshot in target.accounts:
-                            if self._otp_age_seconds(request) > self.otp_max_age_seconds:
+                            stale_request = (
+                                self._otp_age_seconds(request) > self.otp_max_age_seconds
+                            )
+                            shared_established = target.kind == "group" and shared_otp_established
+                            if stale_request and not shared_established:
                                 items.append(
                                     await self._execute_account(
                                         request,
@@ -152,7 +167,10 @@ class LoginService:
                                         forced_result=AutomationResult(
                                             status=LoginStatus.TIMEOUT,
                                             category=ErrorCategory.OTP_EXPIRED,
-                                            message="OTP expired while waiting in the login queue",
+                                            message=(
+                                                "OTP is stale for the Agent queue; broker OTP "
+                                                "validity is not inferred"
+                                            ),
                                         ),
                                     )
                                 )
@@ -175,19 +193,20 @@ class LoginService:
                                     )
                             except AppError:
                                 current = None
-                            items.append(
-                                await self._execute_account(
-                                    request,
-                                    snapshot,
-                                    current,
-                                    otp_value,
-                                    missing_category=(
-                                        ErrorCategory.TARGET_CHANGED
-                                        if target.kind == "group"
-                                        else ErrorCategory.ACCOUNT_NOT_FOUND
-                                    ),
-                                )
+                            item = await self._execute_account(
+                                request,
+                                snapshot,
+                                current,
+                                otp_value,
+                                missing_category=(
+                                    ErrorCategory.TARGET_CHANGED
+                                    if target.kind == "group"
+                                    else ErrorCategory.ACCOUNT_NOT_FOUND
+                                ),
                             )
+                            items.append(item)
+                            if target.kind == "group" and item.status == LoginStatus.SUCCESS:
+                                shared_otp_established = True
                             processed_ids.add(snapshot.id)
                     finally:
                         self._running -= 1

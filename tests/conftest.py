@@ -4,6 +4,7 @@ import pytest
 
 from app.main import create_application
 from app.runtime import AgentRuntime, build_runtime
+from tests.support import account_values
 
 
 @pytest.fixture
@@ -13,13 +14,7 @@ def runtime(tmp_path) -> AgentRuntime:
 
 @pytest.fixture
 def account_payload() -> dict[str, object]:
-    return {
-        "display_name": "Rakuten-A",
-        "alias": "A",
-        "login_id": "LOCAL-LOGIN-ID",
-        "server": "RakutenMT4-Demo",
-        "terminal_path": r"C:\Rakuten\terminal.exe",
-    }
+    return account_values()
 
 
 @pytest.fixture

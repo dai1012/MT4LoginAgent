@@ -199,6 +199,14 @@ def create_api_router(runtime: AgentRuntime) -> APIRouter:
 
     @router.post("/test/windows/real-login")
     async def run_test_windows_real_login(payload: RealLoginRequest) -> dict[str, object]:
+        if not payload.broker_confirmed:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Human confirmation is required: verify Rakuten is not in a known "
+                    "maintenance/offline window"
+                ),
+            )
         if payload.otp is None and not payload.full_slack:
             raise HTTPException(
                 status_code=422, detail="OTP is required for an internal real login"
@@ -208,6 +216,7 @@ def create_api_router(runtime: AgentRuntime) -> APIRouter:
             payload.account_id,
             otp,
             confirmed=payload.confirmed,
+            broker_confirmed=payload.broker_confirmed,
             full_slack=payload.full_slack,
         )
         # Never echo the request body or OTP back to the browser.
@@ -229,11 +238,20 @@ def create_api_router(runtime: AgentRuntime) -> APIRouter:
 
     @router.post("/test/windows/group")
     async def run_test_windows_group(payload: GroupTestRequest) -> dict[str, object]:
+        if not payload.broker_confirmed:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Human confirmation is required: verify Rakuten is not in a known "
+                    "maintenance/offline window"
+                ),
+            )
         otp = payload.otp.get_secret_value()
         results = await runtime.test_runner.run_group(
             payload.group_name,
             otp,
             confirmed=payload.confirmed,
+            broker_confirmed=payload.broker_confirmed,
         )
         return {
             "results": [item.safe_dict() for item in results],

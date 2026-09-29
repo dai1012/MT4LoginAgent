@@ -8,6 +8,11 @@ from app.models.domain import AccountCreate, GroupCreate
 from app.testing.models import DetectedControl, TestPhase, TestStatus
 from app.testing.mt4_discovery import apply_confirmed_selectors, discover_account, selector_diff
 from app.testing.runner import TestRunner
+from tests.support import account_values
+
+
+def account_create(values):
+    return AccountCreate.model_validate({**account_values(), **values})
 
 
 @pytest.mark.asyncio
@@ -33,6 +38,7 @@ async def test_real_login_requires_explicit_confirmation_and_never_submits(runti
 
     monkeypatch.setattr(runtime.login_service, "submit", submit)
     results = await runner.run_real_login("missing", "123456", confirmed=False)
+    assert results[0].id == "REAL_LOGIN_BROKER_CONFIRMATION_REQUIRED"
     assert results[0].status == TestStatus.MANUAL
     assert called is False
 
@@ -41,7 +47,9 @@ async def test_real_login_requires_explicit_confirmation_and_never_submits(runti
 async def test_real_login_is_blocked_until_environment_and_discovery(runtime, monkeypatch):
     runner = TestRunner(runtime)
     monkeypatch.setattr(type(runner), "windows_available", property(lambda self: True))
-    results = await runner.run_real_login("account", "123456", confirmed=True)
+    results = await runner.run_real_login(
+        "account", "123456", confirmed=True, broker_confirmed=True
+    )
     assert results[0].id == "REAL_LOGIN_PHASE1_REQUIRED"
     assert results[0].status == TestStatus.MANUAL
 
@@ -49,13 +57,12 @@ async def test_real_login_is_blocked_until_environment_and_discovery(runtime, mo
 @pytest.mark.asyncio
 async def test_discovery_on_non_windows_never_claims_real_success(runtime):
     account = runtime.accounts.create(
-        AccountCreate.model_validate(
+        account_create(
             {
                 "display_name": "A",
                 "alias": "A",
                 "login_id": "local-id",
                 "server": "server",
-                "terminal_path": r"C:\Rakuten\terminal.exe",
             }
         )
     )
@@ -68,24 +75,27 @@ async def test_discovery_on_non_windows_never_claims_real_success(runtime):
 async def test_group_runner_reports_each_member_result(runtime, monkeypatch):
     for alias, outcome in (("A", "failure"), ("B", "success")):
         runtime.accounts.create(
-            AccountCreate.model_validate(
+            account_create(
                 {
                     "display_name": alias,
                     "alias": alias,
                     "login_id": f"local-{alias}",
                     "server": "server",
-                    "terminal_path": r"C:\Rakuten\terminal.exe",
                     "mock_outcome": outcome,
                 }
             )
         )
     group = runtime.groups.create(
-        GroupCreate(name="GROUP1", account_ids=[a.id for a in runtime.accounts.list()])
+        GroupCreate(
+            name="GROUP1",
+            account_ids=[a.id for a in runtime.accounts.list()],
+            shared_otp_confirmed=True,
+        )
     )
     runner = TestRunner(runtime)
     monkeypatch.setattr(type(runner), "windows_available", property(lambda self: True))
     await runner.run_phase(TestPhase.ENVIRONMENT)
-    results = await runner.run_group(group.name, "123456", confirmed=True)
+    results = await runner.run_group(group.name, "123456", confirmed=True, broker_confirmed=True)
     assert [item.status for item in results[:2]] == [TestStatus.FAIL, TestStatus.PASS]
     assert runner.report_id is not None
 
@@ -93,13 +103,12 @@ async def test_group_runner_reports_each_member_result(runtime, monkeypatch):
 @pytest.mark.asyncio
 async def test_full_slack_mode_creates_manual_session_without_otp(runtime, monkeypatch):
     account = runtime.accounts.create(
-        AccountCreate.model_validate(
+        account_create(
             {
                 "display_name": "A",
                 "alias": "A",
                 "login_id": "local-id",
                 "server": "server",
-                "terminal_path": r"C:\Rakuten\terminal.exe",
             }
         )
     )
@@ -107,7 +116,9 @@ async def test_full_slack_mode_creates_manual_session_without_otp(runtime, monke
     monkeypatch.setattr(type(runner), "windows_available", property(lambda self: True))
     await runner.run_phase(TestPhase.ENVIRONMENT)
     await runner.run_phase(TestPhase.DISCOVERY, account_id=account.id)
-    results = await runner.run_real_login(account.id, "", confirmed=True, full_slack=True)
+    results = await runner.run_real_login(
+        account.id, "", confirmed=True, broker_confirmed=True, full_slack=True
+    )
     assert results[0].status == TestStatus.MANUAL
     assert results[0].evidence["session_id"].startswith("slack-")
     assert "123456" not in results[0].safe_dict()["message"]
@@ -116,13 +127,12 @@ async def test_full_slack_mode_creates_manual_session_without_otp(runtime, monke
 @pytest.mark.asyncio
 async def test_full_slack_result_times_out_without_claiming_success(runtime, monkeypatch):
     account = runtime.accounts.create(
-        AccountCreate.model_validate(
+        account_create(
             {
                 "display_name": "A",
                 "alias": "A",
                 "login_id": "local-id",
                 "server": "server",
-                "terminal_path": r"C:\Rakuten\terminal.exe",
             }
         )
     )
@@ -130,7 +140,9 @@ async def test_full_slack_result_times_out_without_claiming_success(runtime, mon
     monkeypatch.setattr(type(runner), "windows_available", property(lambda self: True))
     await runner.run_phase(TestPhase.ENVIRONMENT)
     await runner.run_phase(TestPhase.DISCOVERY, account_id=account.id)
-    results = await runner.run_real_login(account.id, "", confirmed=True, full_slack=True)
+    results = await runner.run_real_login(
+        account.id, "", confirmed=True, broker_confirmed=True, full_slack=True
+    )
     session_id = results[0].evidence["session_id"]
     timeout_results = await runner.await_slack_result(session_id, timeout_seconds=1)
     assert timeout_results[0].id == "SLACK_E2E_TIMEOUT"
@@ -140,13 +152,12 @@ async def test_full_slack_result_times_out_without_claiming_success(runtime, mon
 @pytest.mark.asyncio
 async def test_full_slack_await_can_be_cancelled(runtime, monkeypatch):
     account = runtime.accounts.create(
-        AccountCreate.model_validate(
+        account_create(
             {
                 "display_name": "A",
                 "alias": "A",
                 "login_id": "local-id",
                 "server": "server",
-                "terminal_path": r"C:\Rakuten\terminal.exe",
             }
         )
     )
@@ -154,7 +165,9 @@ async def test_full_slack_await_can_be_cancelled(runtime, monkeypatch):
     monkeypatch.setattr(type(runner), "windows_available", property(lambda self: True))
     await runner.run_phase(TestPhase.ENVIRONMENT)
     await runner.run_phase(TestPhase.DISCOVERY, account_id=account.id)
-    results = await runner.run_real_login(account.id, "", confirmed=True, full_slack=True)
+    results = await runner.run_real_login(
+        account.id, "", confirmed=True, broker_confirmed=True, full_slack=True
+    )
     task = asyncio.create_task(
         runner.await_slack_result(results[0].evidence["session_id"], timeout_seconds=60)
     )
@@ -168,18 +181,21 @@ async def test_full_slack_await_can_be_cancelled(runtime, monkeypatch):
 async def test_environment_reports_missing_terminal_on_windows_contract(runtime, monkeypatch):
     from app.testing import environment
 
-    runtime.accounts.create(
-        AccountCreate.model_validate(
-            {
-                "display_name": "A",
-                "alias": "A",
-                "login_id": "local-id",
-                "server": "server",
-                "terminal_path": r"C:\missing\terminal.exe",
-                "profile_path": r"C:\missing\profile",
-            }
-        )
+    valid = account_create(
+        {
+            "display_name": "A",
+            "alias": "A",
+            "login_id": "local-id",
+            "server": "server",
+        }
     )
+    invalid = valid.model_copy(
+        update={
+            "terminal_path": r"C:\missing\terminal.exe",
+            "profile_path": r"C:\missing\profile",
+        }
+    )
+    monkeypatch.setattr(runtime.accounts, "list", lambda: [invalid])
     monkeypatch.setattr(environment.sys, "platform", "win32")
     results = environment.run_environment_checks(runtime, runtime.paths)
     terminal = next(item for item in results if item.id == "ENV_TERMINAL_PATHS")
@@ -188,13 +204,12 @@ async def test_environment_reports_missing_terminal_on_windows_contract(runtime,
 
 def test_selector_application_requires_all_high_confidence_controls(runtime):
     account = runtime.accounts.create(
-        AccountCreate.model_validate(
+        account_create(
             {
                 "display_name": "A",
                 "alias": "A",
                 "login_id": "local-id",
                 "server": "server",
-                "terminal_path": r"C:\Rakuten\terminal.exe",
             }
         )
     )

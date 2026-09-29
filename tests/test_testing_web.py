@@ -13,11 +13,21 @@ def test_windows_test_api_exposes_safe_phase_and_manual_guards(client, account_p
     account = client.post("/api/accounts", json=account_payload).json()
     real = client.post(
         "/api/test/windows/real-login",
-        json={"account_id": account["id"], "otp": "123456", "confirmed": False},
+        json={
+            "account_id": account["id"],
+            "otp": "123456",
+            "confirmed": False,
+            "broker_confirmed": True,
+        },
     )
     assert real.status_code == 200
     assert "123456" not in real.text
     assert real.json()["results"][0]["status"] in {"MANUAL", "NOT_RUN"}
+    missing_broker = client.post(
+        "/api/test/windows/real-login",
+        json={"account_id": account["id"], "otp": "123456", "confirmed": True},
+    )
+    assert missing_broker.status_code == 422
     missing = client.post(
         "/api/test/windows/phase",
         json={"phase": "discovery", "account_id": "does-not-exist"},

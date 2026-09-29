@@ -42,7 +42,7 @@ Web Admin
 第一次使用只做这几步：
 
 1. 把整个 `MT4LoginAgent/` 文件夹复制到 Windows。
-2. 安装 Python 3.11+（优先 3.11/3.12）和 Python Launcher `py.exe`。
+2. 安装 Python 3.12（推荐）或 3.11 和 Python Launcher `py.exe`。
 3. 双击 [`install.bat`](install.bat)，等待依赖和 self-check 完成。
 4. 双击 [`start.bat`](start.bat)，记下控制台显示的 **Local admin token**。
 5. 浏览器打开 `http://127.0.0.1:8765`，输入 token；默认端口被占用时按控制台提示修改 `settings.json` 或使用 `--port`。
@@ -115,7 +115,7 @@ SlackGateway ──► SlackCommandProcessor
 ## 3. Windows 第一次安装
 
 1. 复制整个 `MT4LoginAgent/` 目录到 Windows，不要只复制某个脚本。
-2. 安装 Python 3.11 或更新版本，并安装 Python Launcher `py.exe`；实机优先选择已验证的 3.11/3.12，3.13/3.14 的 pywinauto/COM 组合尚未实机验证。
+2. 安装 Python 3.12（推荐）或 3.11，并安装 Python Launcher `py.exe`；`install.bat` 只按 3.12→3.11 顺序选择，不会静默回退到任意 `py -3`。
 3. 双击 `install.bat`。
    - 脚本使用 CRLF，`.gitattributes` 也固定了 Windows 批处理换行。
    - 脚本创建 `.venv`、安装依赖，并执行 import self-check。
@@ -216,10 +216,12 @@ Bot token 正确不代表 `/mt4` 已注册；如果命令没有反应，检查 M
 
 - Group 名称不能和 Account alias 重复。
 - Group 成员顺序就是 Slack 执行顺序。
+- Group 默认不能执行：必须明确勾选 **shared_otp_confirmed**，确认所有成员确实属于允许共享同一 Rakuten OTP 的同一身份范围。Agent 不会猜测多设备/多账户共享规则。
 - 编辑 Group 时，成员列表会保留原顺序；保存后可使用卡片上的 ↑/↓ 调整。
 - 禁用成员仍可保留在 Group 中，但执行时会明确返回 `account_disabled`。
 - 排队期间修改 Group 不会把新成员加入已经提交的任务；已提交任务只执行原成员集合，并对每个成员执行前 live reload。
-- Agent 最多同时保留 16 个登录 job；OTP 有效期上限为 900 秒，排队过久的任务会明确返回 `otp_expired`。
+- Agent 最多同时保留 16 个登录 job；`otp_max_age_seconds` 是 Agent stale-request cutoff（默认 120 秒、上限 300 秒），不是 Rakuten broker OTP 有效期。排队过久的任务会明确返回 `otp_expired`。
+- 旧 schema 允许 `otp_max_age_seconds` 到 900。升级后加载 `settings.json` 时，301..900 的旧值会被下调到上限 300 并在 `agent.log` 打印警告，不会阻止 Agent 启动；超出旧 schema 区间的值仍会直接报错，不会被静默改写。
 
 ### History
 
@@ -265,7 +267,7 @@ test-windows.bat
 2. **Phase 2 — MT4 Discovery / UIA Inspection**：选择 Account，不输入 OTP。检查 terminal/Profile/进程，枚举窗口和 Login ID、OTP、Server、Login button、Save checkbox 候选控件，生成 `uia-tree-sanitized.json`。
 3. **Phase 3 — Slack Safe Tests**：检查 token、Socket Mode、Bot identity、allowlist、malformed/unknown/duplicate 路径。不会向真实 Slack 批量发消息；需要真实命令时显示 `ACTION REQUIRED`。
 4. **Phase 4 — Real Login E2E**：必须勾选确认并输入一次性 OTP；默认只走本机 Login Core → MT4。Full Slack E2E 不会由 Test Runner 自动发送 OTP，而是让你手动发送 `/mt4 A <OTP>`，再用 session id 等待结果。
-5. **Phase 5 — Group Test（可选）**：按 Group 顺序执行，逐个显示结果，支持部分失败；不会默认运行。
+5. **Phase 5 — Group Test（可选）**：按 Group 顺序执行，逐个显示结果，支持部分失败；必须先明确设置 `shared_otp_confirmed`，不会默认运行。
 
 ### 不会自动执行的项目
 
@@ -282,13 +284,13 @@ test-windows.bat
 
 ### 报告位置
 
-报告写在 runtime data 目录，不写在源码目录：
+报告写在 runtime data 目录，不写在源码目录。每次运行生成 HTML/JSON/log；只有实际执行 Phase 2 MT4/UIA Discovery 时才额外生成 `uia-tree-sanitized.json`：
 
 ```text
 <data-dir>/reports/<run-id>/report.html
 <data-dir>/reports/<run-id>/report.json
-<data-dir>/reports/<run-id>/uia-tree-sanitized.json
 <data-dir>/reports/<run-id>/logs-sanitized.txt
+<data-dir>/reports/<run-id>/uia-tree-sanitized.json   # 仅 Phase 2 实际发现时
 ```
 
 报告不包含 OTP、Slack token、Local admin token、HMAC key 或未脱敏的 Login ID。UIA diagnostic 不读取密码控件明文 value，并限制节点数量。报告可以交给开发者分析；清除时删除对应的 `<data-dir>/reports/<run-id>/` 目录即可。

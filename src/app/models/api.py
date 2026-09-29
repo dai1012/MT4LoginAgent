@@ -42,6 +42,7 @@ class RealLoginRequest(APIModel):
     account_id: str = Field(min_length=1, max_length=64)
     otp: SecretStr | None = None
     confirmed: bool = False
+    broker_confirmed: bool = False
     full_slack: bool = False
 
 
@@ -54,6 +55,7 @@ class GroupTestRequest(APIModel):
     group_name: str = Field(min_length=1, max_length=64)
     otp: SecretStr
     confirmed: bool = False
+    broker_confirmed: bool = False
 
 
 class SlackAwaitRequest(APIModel):

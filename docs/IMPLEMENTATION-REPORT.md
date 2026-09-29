@@ -14,7 +14,7 @@
 - **同一账号/Group 并发**：加入 pending account ID 防重和队列容量上限；不再让第二个 OTP 并发操作同一窗口。
 - **排队期间 Account/Group 变化**：每个成员执行前 live reload；target kind/target_id 固定；同名 Group 替换不会执行新成员。
 - **取消任务无回执**：cancelled 任务会为未执行成员生成安全结果并调用 completion callback。
-- **OTP 排队过期**：加入 `otp_max_age_seconds`，超期不送入 automation。
+- **OTP stale request cutoff**：`otp_max_age_seconds` 只表示 Agent 收到请求后的 stale-request cutoff，不代表 broker OTP validity；超期不送入 automation。
 - **原子/回滚**：Account/Group 使用共享 catalog lock；删除失败恢复；JSON 写入增加目录 fsync。
 - **Windows worker**：UIA 放入 spawn 子进程；超时/取消 terminate + kill；worker 崩溃与 timeout 分开报告；父进程不阻塞事件循环。
 
@@ -115,6 +115,15 @@
 - worker 退出竞态会再次 drain Pipe；worker `sender.send()` 失败不会打印第三方 traceback。
 - 端口探测不再设置 `SO_REUSEADDR`；Windows 使用 `SO_EXCLUSIVEADDRUSE`（若存在）。
 - `agent.lock`、Windows UIA 依赖 self-check、`save_login_info` 回读、非 ASCII token、新建认证窗口、枚举失败、单实例锁、shutdown 拒绝新任务、单调时钟 OTP 年龄和 mid-group OTP 过期均补了针对性测试。
+## OC 定向核实与最小修复
+
+- B1：确认 Windows validator 门控会让旧的 `C:\Rakuten` 测试 payload 在 Windows 失败；测试改用临时真实 `.exe`/Profile 占位文件，并补 Windows validator regression。
+- B2：明确 `otp_max_age_seconds` 只是 Agent stale-request cutoff，默认 120 秒、上限 300 秒；不声称等于 Rakuten broker OTP validity。Group 默认要求显式 `shared_otp_confirmed`，不猜测多设备/多账户共享规则。
+- B3：Test Runner 启动 Web 页面时读取 `settings.json` 的实际 `web_port`，不再硬编码 8765。
+- B4：确认没有 broker preflight；真实 OTP 测试前要求人工确认 Rakuten 不处于已知 maintenance/offline 时段。
+- B5：安装脚本严格按 `py -3.12` → `py -3.11` 选择，二者都不存在时明确提示安装，不再静默回退到任意 `py -3`；README/验收文档推荐 Python 3.12。
+- 文档同步：不再声称 macOS/Linux CI，不再声称未创建 baseline commit；UIA diagnostic 明确只在实际 Phase 2 发现时生成。
+
 ## Windows Acceptance Test Runner
 
 - 新增 `src/app/testing/`：统一 TestResult/Report 模型、Environment Safe Checks、MT4/UIA Discovery、Slack Safe Tests、报告生成和 secret redaction。
@@ -126,8 +135,9 @@
 
 
 ```text
-Python 3.14: 97 passed
-Python 3.11: 97 passed
+Python 3.14: 105 passed
+Python 3.11: 本轮未能重建测试 venv（PyPI 超时/依赖解析失败）；baseline 版本此前通过
+Python 3.12: compileall 通过；pytest 环境未能安装
 Ruff: All checks passed
 ```
 
@@ -146,7 +156,7 @@ Ruff: All checks passed
 3. `secrets.json` 依赖 Windows `%LOCALAPPDATA%` ACL，V1 未接入 DPAPI/Credential Manager。
 4. History 文件不会自动轮转；长期运行需要人工备份/保留策略。
 5. Slack 完成回执发送到触发命令的频道/DM；公共频道会显示 alias 和结果，建议私聊或受控频道。
-6. 登录队列上限为 16，OTP 有效期上限为 900 秒；深度队列在慢速 Windows 机器上可能使后续成员返回 `otp_expired`。
+6. 登录队列上限为 16；`otp_max_age_seconds` 默认 120 秒、上限 300 秒，仅是 Agent stale-request cutoff，不是 broker OTP validity。
 7. MT4 主窗口 UIA 树规模、遍历耗时和 COM 行为仍需真实 Windows 测量。
 8. Slack handler 在登录完成前被人工重连时，旧 generation 的 completion `say` 可能失败，结果需要用户用 `/mt4 status`/History 补查。
-9. 项目当前在父仓库中是未跟踪目录，尚未创建 baseline commit；建议进入 Windows 测试前创建 `pre-windows-test` baseline commit，但本轮没有擅自提交或 push。
+9. 已知 baseline commit 为 `aa47fc5`，tag 为 `pre-windows-test`；本轮不修改 Git 历史。
