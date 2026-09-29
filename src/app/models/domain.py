@@ -11,6 +11,18 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 ALIAS_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+
+# Logical controls the Win32 dialog fallback must be able to address. login_id and
+# server both live inside editable ComboBoxes whose child Edit shares one native
+# control id, so each has an explicit parent anchor key as well.
+_WIN32_FALLBACK_KEYS = (
+    "login_id_combo",
+    "login_id_edit",
+    "otp",
+    "server_combo",
+    "server_edit",
+    "login_button",
+)
 SLACK_USER_ID_PATTERN = re.compile(r"^[UW][A-Z0-9]{2,31}$", re.IGNORECASE)
 OTP_PATTERN = re.compile(r"^[0-9]{4,10}$")
 _NESTED_QUANTIFIER_RE = re.compile(r"\([^)]*(?:[+*?{][^)]*)\)[+*?{]")
@@ -107,6 +119,46 @@ class ErrorCategory(StrEnum):
     UI_VERIFICATION_UNVERIFIED = "ui_verification_unverified"
 
 
+class Win32FallbackConfig(APIModel):
+    """Explicit opt-in Win32 dialog fallback.
+
+    Some brokers render the login form as a plain Win32 ``#32770`` dialog that UI
+    Automation never exposes (verified on Rakuten MT4), so the UIA selector route
+    cannot resolve it at all. This configuration addresses that dialog by native
+    control id instead. It is never enabled automatically: an Account must opt in
+    and must supply ids that were verified on that machine.
+    """
+
+    enabled: bool = False
+    dialog_class: str = Field(default="#32770", min_length=1, max_length=128)
+    anchors: list[str] = Field(default_factory=list, max_length=10)
+    control_ids: dict[str, int] = Field(default_factory=dict)
+
+    @field_validator("control_ids")
+    @classmethod
+    def validate_control_ids(cls, value: dict[str, int]) -> dict[str, int]:
+        unknown = set(value) - set(_WIN32_FALLBACK_KEYS)
+        if unknown:
+            raise ValueError(f"unsupported Win32 control keys: {', '.join(sorted(unknown))}")
+        for item in value.values():
+            if not 0 < item <= 65535:
+                raise ValueError("Win32 control ids must be within 1..65535")
+        return dict(value)
+
+    @model_validator(mode="after")
+    def require_ids_when_enabled(self) -> Win32FallbackConfig:
+        if self.enabled:
+            missing = {"login_id_edit", "otp", "login_button"} - set(self.control_ids)
+            if missing:
+                raise ValueError(
+                    "win32_fallback requires control_ids for: " + ", ".join(sorted(missing))
+                )
+        return self
+
+    def key(self, name: str) -> int | None:
+        return self.control_ids.get(name)
+
+
 class AccountConfig(APIModel):
     id: str = Field(default_factory=new_id, min_length=1, max_length=64)
     display_name: str = Field(min_length=1, max_length=100)
@@ -121,6 +173,7 @@ class AccountConfig(APIModel):
     success_window_title_regex: str | None = Field(default=None, max_length=256)
     control_ids: dict[str, str] = Field(default_factory=dict)
     control_titles: dict[str, str] = Field(default_factory=dict)
+    win32_fallback: Win32FallbackConfig = Field(default_factory=Win32FallbackConfig)
     enabled: bool = True
     save_login_info: bool = False
     launch_timeout_seconds: float = Field(default=30.0, ge=5.0, le=180.0)
@@ -184,6 +237,7 @@ class AccountCreate(APIModel):
     success_window_title_regex: str | None = Field(default=None, max_length=256)
     control_ids: dict[str, str] = Field(default_factory=dict)
     control_titles: dict[str, str] = Field(default_factory=dict)
+    win32_fallback: Win32FallbackConfig = Field(default_factory=Win32FallbackConfig)
     enabled: bool = True
     save_login_info: bool = False
     launch_timeout_seconds: float = Field(default=30.0, ge=5.0, le=180.0)
@@ -204,6 +258,7 @@ class AccountPatch(APIModel):
     success_window_title_regex: str | None = Field(default=None, max_length=256)
     control_ids: dict[str, str] | None = None
     control_titles: dict[str, str] | None = None
+    win32_fallback: Win32FallbackConfig | None = None
     enabled: bool | None = None
     save_login_info: bool | None = None
     launch_timeout_seconds: float | None = Field(default=None, ge=5.0, le=180.0)

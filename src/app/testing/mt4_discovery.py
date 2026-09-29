@@ -145,6 +145,45 @@ def _control_metadata(control: Any, account: AccountConfig) -> dict[str, Any]:
     }
 
 
+def _win32_discovery(adapter: Any, account: AccountConfig, pids: list[int]) -> tuple[Any, bool]:
+    """Report whether the opted-in Win32 login dialog and its ids are usable."""
+    try:
+        dialog = adapter._win32_dialog(pids, account)
+    except Exception:
+        dialog = None
+    if dialog is None:
+        return (
+            _result(
+                "WIN32_DIALOG_DISCOVERY",
+                "Win32 fallback dialog",
+                TestStatus.WARN,
+                "No Win32 login dialog satisfied every precondition (pid, dialog class, "
+                "window_title_regex, anchor texts, control ids).",
+                detail="win32_fallback enabled but the dialog was not usable",
+                action="Open the login dialog, then re-check dialog_class, anchors and ids.",
+                severity=TestSeverity.HIGH,
+            ),
+            False,
+        )
+    try:
+        controls = adapter._win32_controls(dialog, account)
+    except Exception:
+        controls = {}
+    resolved = sorted(key for key, value in controls.items() if value is not None)
+    return (
+        _result(
+            "WIN32_DIALOG_DISCOVERY",
+            "Win32 fallback dialog",
+            TestStatus.PASS,
+            "The Win32 login dialog was located and its configured control ids resolved.",
+            detail=",".join(resolved),
+            action="Real Login will drive this dialog by native control id.",
+            severity=TestSeverity.HIGH,
+        ),
+        True,
+    )
+
+
 def _collect_controls(
     adapter: Any, account: AccountConfig, pids: list[int]
 ) -> list[dict[str, Any]]:
@@ -395,7 +434,12 @@ async def discover_account(account: AccountConfig, adapter: Any) -> DiscoveryOut
             if not unresolved
             else "Some UIA controls need human confirmation.",
             detail=",".join(unresolved),
-            action="Review candidates and explicitly apply selectors if appropriate.",
+            action=(
+                "No UIA Automation IDs are available; the Win32 fallback addresses this "
+                "dialog by native control id, so do not apply empty selectors."
+                if account.win32_fallback.enabled
+                else "Review candidates and explicitly apply selectors if appropriate."
+            ),
             severity=TestSeverity.HIGH,
             evidence={"control_count": len(outcome.controls), "needs_confirmation": unresolved},
         )
@@ -417,6 +461,23 @@ async def discover_account(account: AccountConfig, adapter: Any) -> DiscoveryOut
             severity=TestSeverity.HIGH,
         )
     )
+    win32_dialog_found = False
+    if account.win32_fallback.enabled:
+        win32_result, win32_dialog_found = _win32_discovery(adapter, account, pids)
+        outcome.results.append(win32_result)
+        if win32_dialog_found and not login_window_seen:
+            outcome.results.append(
+                _result(
+                    "UIA_LOGIN_WINDOW",
+                    "Login dialog discovery",
+                    TestStatus.PASS,
+                    "The login dialog is not exposed through UI Automation; it was "
+                    "located through the configured Win32 fallback.",
+                    detail="win32_fallback",
+                    action="Continue with Real Login; no UIA selectors are required.",
+                    severity=TestSeverity.HIGH,
+                )
+            )
     duration = int((time.monotonic() - started) * 1000)
     outcome.results = [
         item.model_copy(update={"duration_ms": duration}) for item in outcome.results

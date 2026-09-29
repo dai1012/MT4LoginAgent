@@ -259,6 +259,16 @@ class WindowsAutomation:
                         "refusing an ambiguous login",
                     )
             login_window = self._find_login_window(pids, account)
+            win32_controls: dict[str, Any] = {}
+            use_win32 = False
+            if login_window is None:
+                # UIA is primary. The native dialog is only considered when the
+                # Account explicitly opted in and every Win32 precondition holds.
+                dialog = self._win32_dialog(pids, account)
+                if dialog is not None:
+                    win32_controls = self._win32_controls(dialog, account)
+                    if self._win32_usable(win32_controls):
+                        login_window, use_win32 = dialog, True
             if login_window is None:
                 if self._has_main_window(pids):
                     raise WindowsAutomationError(
@@ -270,18 +280,32 @@ class WindowsAutomation:
                     "MT4 login window was not found before timeout",
                 )
 
-            if not self._select_server(login_window, account):
+            if use_win32:
+                server_ready = self._win32_select_server(win32_controls, account)
+            else:
+                server_ready = self._select_server(login_window, account)
+            if not server_ready:
                 raise WindowsAutomationError(
                     ErrorCategory.UI_CONTROL_NOT_FOUND,
                     "MT4 Server control was not found or could not be selected",
                 )
-            login_control, otp_control = self._find_login_controls(login_window, account)
+            if use_win32:
+                login_control, otp_control = (
+                    win32_controls["login_id"],
+                    win32_controls["otp"],
+                )
+            else:
+                login_control, otp_control = self._find_login_controls(login_window, account)
 
             self._set_text(login_control, account.login_id)
             self._set_text(otp_control, otp, verify_exact=False)
-            self._check_save_login(login_window, account)
+            if not use_win32:
+                self._check_save_login(login_window, account)
 
-            login_button = self._find_control(login_window, account, "login_button", "Button")
+            if use_win32:
+                login_button = win32_controls["login_button"]
+            else:
+                login_button = self._find_control(login_window, account, "login_button", "Button")
             if login_button is None:
                 raise WindowsAutomationError(
                     ErrorCategory.UI_CONTROL_NOT_FOUND,
@@ -443,6 +467,170 @@ class WindowsAutomation:
             except Exception:
                 continue
         return windows
+
+    @staticmethod
+    def _enum_top_windows() -> list[tuple[int, int, str, str]]:
+        """Enumerate native top-level windows as (handle, pid, class, title).
+
+        UI Automation does not expose some brokers' login dialogs (verified on
+        Rakuten MT4), so discovery falls back to native enumeration. Only window
+        identity is read here; no control text or value is touched.
+        """
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        rows: list[tuple[int, int, str, str]] = []
+
+        def callback(handle: int, _param: int) -> bool:
+            if not user32.IsWindow(handle):
+                return True
+            class_buffer = ctypes.create_unicode_buffer(256)
+            user32.GetClassNameW(handle, class_buffer, 256)
+            title = ""
+            length = user32.GetWindowTextLengthW(handle)
+            if length > 0:
+                title_buffer = ctypes.create_unicode_buffer(length + 1)
+                user32.GetWindowTextW(handle, title_buffer, length + 1)
+                title = title_buffer.value
+            process_id = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(handle, ctypes.byref(process_id))
+            rows.append((int(handle), int(process_id.value), class_buffer.value, title))
+            return True
+
+        user32.EnumWindows(callback, 0)
+        return rows
+
+    @staticmethod
+    def _win32_wrap(handle: int) -> Any | None:
+        try:
+            from pywinauto import Application
+
+            application = Application(backend="win32").connect(handle=int(handle))
+            return application.window(handle=int(handle))
+        except Exception:
+            return None
+
+    @staticmethod
+    def _win32_descendants(control: Any) -> list[Any]:
+        try:
+            return list(control.descendants())
+        except Exception:
+            return []
+
+    @staticmethod
+    def _win32_control_id(control: Any) -> int | None:
+        try:
+            value = getattr(control.element_info, "control_id", None)
+            return int(value) if value is not None else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _win32_class(control: Any) -> str:
+        try:
+            return str(getattr(control.element_info, "class_name", "") or "")
+        except Exception:
+            return ""
+
+    def _win32_child(
+        self, root: Any, control_id: int | None, class_name: str | None = None
+    ) -> Any | None:
+        """Select exactly one descendant. Ambiguity resolves to nothing, fail closed.
+
+        Both the Login ID and the Server ComboBox contain a child Edit that shares
+        one native control id, so callers must pass the owning ComboBox as ``root``
+        instead of the dialog.
+        """
+        if control_id is None:
+            return None
+        pool = [
+            control
+            for control in self._win32_descendants(root)
+            if self._win32_control_id(control) == int(control_id)
+            and (class_name is None or self._win32_class(control) == class_name)
+        ]
+        return pool[0] if len(pool) == 1 else None
+
+    def _win32_controls(self, dialog: Any, account: AccountConfig) -> dict[str, Any]:
+        """Resolve the login controls by native id, anchored to their owners."""
+        config = account.win32_fallback
+        found: dict[str, Any] = {}
+        login_combo = self._win32_child(dialog, config.key("login_id_combo"), "ComboBox")
+        login_edit = self._win32_child(login_combo, config.key("login_id_edit"), "Edit")
+        found["login_id"] = login_edit if login_edit is not None else login_combo
+        found["otp"] = self._win32_child(dialog, config.key("otp"), "Edit")
+        server_combo = self._win32_child(dialog, config.key("server_combo"), "ComboBox")
+        found["server_combo"] = server_combo
+        found["server_edit"] = self._win32_child(server_combo, config.key("server_edit"), "Edit")
+        found["login_button"] = self._win32_child(dialog, config.key("login_button"), "Button")
+        return found
+
+    @staticmethod
+    def _win32_usable(controls: dict[str, Any]) -> bool:
+        if controls.get("login_id") is None or controls.get("otp") is None:
+            return False
+        if controls.get("login_button") is None:
+            return False
+        return controls.get("server_combo") is not None or controls.get("server_edit") is not None
+
+    def _win32_dialog(self, pids: list[int], account: AccountConfig) -> Any | None:
+        """Locate the login dialog natively, verifying every precondition first.
+
+        Fails closed unless the dialog belongs to one of the resolved MT4 pids, has
+        the configured class, matches the Account window_title_regex, carries every
+        configured anchor text, and exposes each required control id unambiguously.
+        """
+        config = account.win32_fallback
+        if not config.enabled or not account.window_title_regex:
+            return None
+        expression = re.compile(account.window_title_regex)
+        expected = set(pids)
+        for handle, process_id, class_name, title in self._enum_top_windows():
+            if process_id not in expected or class_name != config.dialog_class:
+                continue
+            if not expression.search(title):
+                continue
+            dialog = self._win32_wrap(handle)
+            if dialog is None:
+                continue
+            texts = []
+            for control in self._win32_descendants(dialog):
+                try:
+                    value = control.window_text()
+                except Exception:
+                    continue
+                if value:
+                    texts.append(str(value))
+            joined = " ".join(texts).casefold()
+            if any(anchor.casefold() not in joined for anchor in config.anchors):
+                continue
+            if not self._win32_usable(self._win32_controls(dialog, account)):
+                continue
+            return dialog
+        return None
+
+    def _win32_select_server(
+        self, controls: dict[str, Any], account: AccountConfig
+    ) -> bool:
+        """Select the server through the ComboBox API, never by keypress count."""
+        combo = controls.get("server_combo")
+        if combo is not None:
+            try:
+                items = [str(item) for item in combo.texts()]
+            except Exception:
+                items = []
+            if account.server in items:
+                try:
+                    combo.select(account.server)
+                except Exception:
+                    return False
+                return self._read_control_value(combo).casefold() == account.server.casefold()
+        edit = controls.get("server_edit")
+        if edit is None:
+            return False
+        self._set_text(edit, account.server)
+        return True
 
     def _find_login_window(self, pids: list[int], account: AccountConfig) -> Any | None:
         if not account.window_title_regex:
@@ -923,19 +1111,30 @@ class WindowsAutomation:
 
     @staticmethod
     def _invoke(control: Any) -> None:
-        try:
-            invoke = getattr(control, "invoke", None)
-            if callable(invoke):
-                invoke()
+        # UIA wrappers expose invoke(); win32 wrappers expose click().
+        action = getattr(control, "invoke", None)
+        if callable(action):
+            try:
+                action()
                 return
-        except Exception as exc:
-            raise WindowsAutomationError(
-                ErrorCategory.UI_AUTOMATION_ERROR,
-                "The MT4 login control could not be activated through InvokePattern",
-            ) from exc
+            except Exception as exc:
+                raise WindowsAutomationError(
+                    ErrorCategory.UI_AUTOMATION_ERROR,
+                    "The MT4 login control could not be activated through InvokePattern",
+                ) from exc
+        action = getattr(control, "click", None)
+        if callable(action):
+            try:
+                action()
+                return
+            except Exception as exc:
+                raise WindowsAutomationError(
+                    ErrorCategory.UI_AUTOMATION_ERROR,
+                    "The MT4 login control could not be activated through click",
+                ) from exc
         raise WindowsAutomationError(
             ErrorCategory.UI_AUTOMATION_ERROR,
-            "The MT4 login control does not expose InvokePattern",
+            "The MT4 login control does not expose InvokePattern or click",
         )
 
 
