@@ -351,6 +351,13 @@ LEGACY_OTP_MAX_AGE_MAX_SECONDS = 900
 
 class AppSettings(APIModel):
     allowed_slack_user_ids: list[str] = Field(default_factory=list, max_length=1000)
+    # Which Account aliases each Slack User may operate, keyed by User ID.
+    #
+    # This is deliberately fail-closed: a user who is in allowed_slack_user_ids but
+    # has no entry here, or an empty list, can operate nothing. Being added to the
+    # allowlist must never silently grant access to every existing Account, otherwise
+    # a single added colleague inherits everyone's trading accounts.
+    slack_user_account_bindings: dict[str, list[str]] = Field(default_factory=dict)
     slack_enabled: bool = True
     automation_mode: AutomationMode = AutomationMode.AUTO
     web_port: int = Field(default=8765, ge=1024, le=65535)
@@ -373,6 +380,22 @@ class AppSettings(APIModel):
                 raise ValueError(f"invalid Slack user ID: {value}")
             if candidate not in normalized:
                 normalized.append(candidate)
+        return normalized
+
+    @field_validator("slack_user_account_bindings")
+    @classmethod
+    def validate_bindings(cls, values: dict[str, list[str]]) -> dict[str, list[str]]:
+        normalized: dict[str, list[str]] = {}
+        for user_id, aliases in values.items():
+            candidate = user_id.strip().upper()
+            if not SLACK_USER_ID_PATTERN.fullmatch(candidate):
+                raise ValueError(f"invalid Slack user ID: {user_id}")
+            cleaned: list[str] = []
+            for alias in aliases:
+                item = alias.strip()
+                if item and item not in cleaned:
+                    cleaned.append(item)
+            normalized[candidate] = cleaned
         return normalized
 
 
@@ -400,6 +423,7 @@ class SlackPublicSettings(APIModel):
     app_token_configured: bool
     bot_token_configured: bool
     allowed_slack_user_ids: list[str]
+    slack_user_account_bindings: dict[str, list[str]] = Field(default_factory=dict)
     connected: bool = False
     connection_state: str = "disconnected"
     last_error: str | None = None

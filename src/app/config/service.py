@@ -19,15 +19,21 @@ class SettingsService:
         *,
         enabled: bool,
         allowed_slack_user_ids: list[str],
+        slack_user_account_bindings: dict[str, list[str]] | None = None,
         app_token: SecretStr | None,
         bot_token: SecretStr | None,
         clear_app_token: bool,
         clear_bot_token: bool,
     ) -> SlackPublicSettings:
-        settings = self.settings.update(
-            slack_enabled=enabled,
-            allowed_slack_user_ids=allowed_slack_user_ids,
-        )
+        # settings.update() re-validates the whole model, so a None would be written
+        # into a dict field and rejected. Only pass the key when it was supplied.
+        setting_changes: dict[str, object] = {
+            "slack_enabled": enabled,
+            "allowed_slack_user_ids": allowed_slack_user_ids,
+        }
+        if slack_user_account_bindings is not None:
+            setting_changes["slack_user_account_bindings"] = slack_user_account_bindings
+        settings = self.settings.update(**setting_changes)
         changes: dict[str, SecretStr | None] = {}
         if clear_app_token:
             changes["slack_app_token"] = None
@@ -62,4 +68,5 @@ class SettingsService:
             app_token_configured=current_secrets.app_token_configured,
             bot_token_configured=current_secrets.bot_token_configured,
             allowed_slack_user_ids=current.allowed_slack_user_ids,
+            slack_user_account_bindings=dict(current.slack_user_account_bindings),
         )

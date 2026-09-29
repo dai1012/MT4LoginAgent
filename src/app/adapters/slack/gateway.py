@@ -4,7 +4,7 @@ import asyncio
 import inspect
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -146,6 +146,46 @@ class SlackGateway:
             item.casefold() for item in current.allowed_slack_user_ids
         }
 
+    def _allowed_aliases(self, sender_id: str) -> frozenset[str]:
+        """Account aliases this Slack user may operate.
+
+        Deliberately fail-closed: a user in the allowlist with no binding gets an
+        empty set and therefore cannot operate anything. Being added to the allowlist
+        must never imply access to every existing Account.
+        """
+        current = self.settings.get()
+        key = sender_id.strip().upper()
+        if not key:
+            return frozenset()
+        return frozenset(current.slack_user_account_bindings.get(key, ()))
+
+    def _private_poster(
+        self, secrets: SecretsConfig
+    ) -> Callable[[str, str, str], Awaitable[None]]:
+        """Deliver a login result to the requester only.
+
+        In a channel the result is posted ephemerally, so only the person who ran the
+        command sees it. In a bot DM the conversation is already private, and the
+        ephemeral API is not a good fit there, so a normal DM message is used. The
+        originating channel is never used as a broadcast.
+        """
+        token = secrets.slack_bot_token.get_secret_value()  # type: ignore[union-attr]
+
+        async def post_private(channel: str, user: str, text: str) -> None:
+            if not channel or not user:
+                # Without a destination there is no safe way to deliver this.
+                logger.error("Slack private delivery has no destination; dropping message")
+                return
+            from slack_sdk.web.async_client import AsyncWebClient
+
+            client = AsyncWebClient(token=token)
+            if channel.startswith("D"):
+                await client.chat_postMessage(channel=channel, text=text)
+            else:
+                await client.chat_postEphemeral(channel=channel, user=user, text=text)
+
+        return post_private
+
     async def start(self) -> bool:
         self._ensure_supervisor()
         async with self._lock:
@@ -182,6 +222,8 @@ class SlackGateway:
             self._is_authorized,
             self.status_provider,
             dedup_guard=self.dedup_guard,
+            aliases_for=self._allowed_aliases,
+            post_private=self._private_poster(secrets),
         )
 
         @slack_app.command("/mt4")

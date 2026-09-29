@@ -150,9 +150,25 @@ def create_api_router(runtime: AgentRuntime) -> APIRouter:
 
     @router.put("/slack")
     async def update_slack_settings(payload: SlackSettingsUpdate):
+        bindings = payload.slack_user_account_bindings
+        if bindings is not None:
+            # Reject a binding that names an alias which does not exist rather than
+            # storing a grant that silently points nowhere, and rather than dropping
+            # it quietly. The user is told exactly which alias is wrong.
+            known = {account.alias for account in runtime.accounts.list()}
+            orphans = sorted(
+                {alias for aliases in bindings.values() for alias in aliases} - known
+            )
+            if orphans:
+                raise DomainValidationError(
+                    "Account bindings reference unknown aliases: "
+                    + ", ".join(orphans)
+                    + ". Create the Account first or remove the binding."
+                )
         runtime.settings.update(
             enabled=payload.enabled,
             allowed_slack_user_ids=payload.allowed_slack_user_ids,
+            slack_user_account_bindings=bindings,
             app_token=payload.app_token,
             bot_token=payload.bot_token,
             clear_app_token=payload.clear_app_token,

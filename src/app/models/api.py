@@ -20,6 +20,9 @@ class GeneralSettingsUpdate(APIModel):
 class SlackSettingsUpdate(APIModel):
     enabled: bool = True
     allowed_slack_user_ids: list[str] = Field(default_factory=list, max_length=1000)
+    # Which Account aliases each Slack User may operate. Omitted means "leave as is"
+    # so an older client that does not send the field cannot wipe every binding.
+    slack_user_account_bindings: dict[str, list[str]] | None = None
     app_token: SecretStr | None = None
     bot_token: SecretStr | None = None
     clear_app_token: bool = False
