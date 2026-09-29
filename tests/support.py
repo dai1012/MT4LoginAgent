@@ -34,6 +34,22 @@ ACCOUNT_DEFAULTS: dict[str, Any] = {
 }
 
 
+def instance_paths(alias: str) -> dict[str, str]:
+    """Return a distinct, on-disk terminal file and profile directory for an alias.
+
+    MetaTrader runs each concurrently open account from its own terminal
+    installation, and the catalog refuses to let two enabled Accounts resolve to the
+    same instance. The paths must really exist, otherwise the Windows validator
+    rejects the account for a missing terminal file or profile directory before the
+    guard is ever reached.
+    """
+    terminal = _TEST_ROOT / f"terminal-{alias}.exe"
+    terminal.write_bytes(b"test placeholder")
+    profile = _TEST_PROFILE / alias
+    profile.mkdir(parents=True, exist_ok=True)
+    return {"terminal_path": str(terminal), "profile_path": str(profile)}
+
+
 def account_values(**overrides: Any) -> dict[str, Any]:
     values = {**ACCOUNT_DEFAULTS, **overrides}
     control_ids = {**ACCOUNT_DEFAULTS["control_ids"], **overrides.get("control_ids", {})}
@@ -41,4 +57,4 @@ def account_values(**overrides: Any) -> dict[str, Any]:
     return values
 
 
-__all__ = ["ACCOUNT_DEFAULTS", "account_values"]
+__all__ = ["ACCOUNT_DEFAULTS", "account_values", "instance_paths"]

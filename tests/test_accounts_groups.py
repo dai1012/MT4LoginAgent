@@ -62,8 +62,20 @@ def test_account_delete_rolls_back_if_group_purge_fails(runtime, account_payload
 
 def test_group_crud_order_and_delete_purges_account(runtime, account_payload):
     a = runtime.accounts.create(AccountCreate.model_validate({**account_payload, "alias": "A"}))
+    # B is a separate terminal installation: concurrently running accounts must not
+    # resolve to the same MT4 instance, which the catalog guard now enforces.
     b = runtime.accounts.create(
-        AccountCreate.model_validate({**account_payload, "alias": "B", "login_id": "B"})
+        AccountCreate.model_validate(
+            {
+                **account_payload,
+                "alias": "B",
+                "login_id": "B",
+                "terminal_path": account_payload["terminal_path"].replace(
+                    "terminal.exe", "terminal-b.exe"
+                ),
+                "profile_path": f'{account_payload["profile_path"]}/B',
+            }
+        )
     )
     group = runtime.groups.create(GroupCreate(name="GROUP1", account_ids=[a.id, b.id]))
     assert group.shared_otp_confirmed is False

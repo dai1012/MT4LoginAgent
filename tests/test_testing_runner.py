@@ -19,11 +19,16 @@ from app.testing.models import (
 from app.testing.mt4_discovery import apply_confirmed_selectors, discover_account, selector_diff
 from app.testing.runner import TestRunner
 from app.testing.slack_tests import run_slack_checks
-from tests.support import account_values
+from tests.support import account_values, instance_paths
 
 
 def account_create(values):
-    return AccountCreate.model_validate({**account_values(), **values})
+    # Each Account gets its own terminal installation folder and its own process
+    # working directory, because the catalog refuses to let two enabled Accounts
+    # resolve to the same MT4 instance. An explicit path from the caller still wins.
+    base = account_values()
+    values = {**instance_paths(str(values.get("alias", "A"))), **values}
+    return AccountCreate.model_validate({**base, **values})
 
 
 class _FakeElement:

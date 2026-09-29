@@ -4,6 +4,7 @@ import logging
 
 from pydantic import ValidationError
 
+from app.accounts.instance_guard import find_instance_collision
 from app.accounts.locking import catalog_locked
 from app.accounts.validator import validate_account_configuration
 from app.config.repositories import AccountRepository, GroupRepository
@@ -51,6 +52,7 @@ class AccountService:
                 raise ConflictError(f"Alias '{account.alias}' already exists")
             if self.groups.find_by_name(account.alias) is not None:
                 raise ConflictError(f"'{account.alias}' is already a Group name")
+            self._ensure_no_instance_collision(account, items)
             repository.replace_all([*items, account])
         return account
 
@@ -71,6 +73,7 @@ class AccountService:
                 raise ConflictError(f"Alias '{updated.alias}' already exists")
             if self.groups.find_by_name(updated.alias) is not None:
                 raise ConflictError(f"'{updated.alias}' is already a Group name")
+            self._ensure_no_instance_collision(updated, items, exclude_id=account_id)
             items[index] = updated
             repository.replace_all(items)
         return updated
@@ -108,6 +111,9 @@ class AccountService:
             items = repository.all()
             index = self._index(items, account_id)
             updated = items[index].model_copy(update={"enabled": enabled, "updated_at": utc_now()})
+            # Turning an Account off never raises; enabling joins the guard.
+            if enabled:
+                self._ensure_no_instance_collision(updated, items, exclude_id=account_id)
             items[index] = updated
             repository.replace_all(items)
             return updated
@@ -131,6 +137,25 @@ class AccountService:
                 for error in exc.errors()
             )
             raise DomainValidationError(f"Invalid account configuration: {details}") from exc
+
+    @staticmethod
+    def _ensure_no_instance_collision(
+        candidate: AccountConfig,
+        others: list[AccountConfig],
+        *,
+        exclude_id: str | None = None,
+    ) -> None:
+        other = find_instance_collision(candidate, others, exclude_id=exclude_id)
+        if other is None:
+            return
+        raise DomainValidationError(
+            f"MT4 instance collision: account '{candidate.alias}' resolves to the same "
+            f"terminal instance as enabled account '{other.alias}' (id '{other.id}'). "
+            "Each concurrently running MT4 Account needs its own terminal "
+            "installation folder and its own process working directory (cwd), per "
+            "MetaTrader multi-instance guidance; install a separate terminal copy "
+            "and configure a separate cwd for this Account before enabling it."
+        )
 
     @staticmethod
     def _index(items: list[AccountConfig], account_id: str) -> int:

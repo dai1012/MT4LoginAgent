@@ -21,11 +21,16 @@ from app.models.domain import (
 from app.models.errors import ConfigurationError, DomainValidationError
 from app.mt4.factory import build_automation
 from app.mt4.mock_automation import MockAutomation
-from tests.support import account_values
+from tests.support import account_values, instance_paths
 
 
 def account_create(values):
-    return AccountCreate.model_validate({**account_values(), **values})
+    # Each Account gets its own terminal installation folder and its own process
+    # working directory, because the catalog refuses to let two enabled Accounts
+    # resolve to the same MT4 instance. An explicit path from the caller still wins.
+    base = account_values()
+    values = {**instance_paths(str(values.get("alias", "A"))), **values}
+    return AccountCreate.model_validate({**base, **values})
 
 
 def make_account(outcome="success", alias="A") -> AccountConfig:
