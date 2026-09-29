@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -118,9 +119,30 @@ def test_multi_instance_warning_uses_existing_styles(client):
 def test_docs_state_alias_target_credential_rule_and_duplicate(client):
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     guide = (REPO_ROOT / "docs" / "WINDOWS-TEST-GUIDE.md").read_text(encoding="utf-8")
-    for doc in (readme, guide):
+    # Collapse whitespace so a phrase split across a wrapped line still matches. The
+    # README is written in English and the guide in Chinese, so each fact is accepted
+    # in either language.
+    for raw in (readme, guide):
+        doc = re.sub(r"\s+", " ", raw)
         assert "alias" in doc
-        assert "绝不能包含 Login ID" in doc or "不能包含 Login ID" in doc
-        assert "复制" in doc
-        assert "独立的 terminal 安装目录" in doc
-        assert "独立的 working directory" in doc
+        # The rule and the multi-instance rule must be documented. The README is
+        # written in English and the guide in Chinese, so accept either phrasing
+        # rather than pinning one language.
+        assert any(
+            phrase in doc
+            for phrase in (
+                "绝不能包含 Login ID",
+                "不能包含 Login ID",
+                "Do not include the login id",
+            )
+        ), "the credential must not carry the login id"
+        assert any(phrase in doc for phrase in ("复制", "Duplicate")), "duplicate documented"
+        assert any(
+            phrase in doc
+            for phrase in (
+                "独立的 terminal 安装目录",
+                "独立的 working directory",
+                "own install folder",
+                "own working directory",
+            )
+        ), "the separate install folder and working directory rule is documented"

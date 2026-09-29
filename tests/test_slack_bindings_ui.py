@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import yaml
@@ -94,11 +95,32 @@ def test_docs_carry_the_two_user_worked_example(client):
     del client  # docs are read from disk, not served
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     guide = (REPO_ROOT / "docs" / "WINDOWS-TEST-GUIDE.md").read_text(encoding="utf-8")
-    for doc in (readme, guide):
-        assert "U_A -> [A]" in doc
-        assert "U_B -> [B]" in doc
-        assert "成员目录" in doc
-        assert "保持独立" in doc
+    # Collapse whitespace so a phrase split across a wrapped line still matches.
+    for raw in (readme, guide):
+        doc = re.sub(r"\s+", " ", raw)
+        # Two people, one workspace, separate accounts. The README is English and
+        # the guide Chinese; both must carry the worked example and the boundary.
+        assert any(
+            phrase in doc
+            for phrase in ("U_A -> [A]", "U012ABCDEF  ->  A", "U012ABCDEF -> A")
+        ), "the two-user worked example is missing"
+        assert any(
+            phrase in doc
+            for phrase in ("U_B -> [B]", "U0987654321  ->  B", "U0987654321 -> B")
+        ), "the second user's example is missing"
+        assert any(
+            phrase in doc
+            for phrase in ("成员目录", "member directory", "Slack profile")
+        ), "the Slack member directory boundary is not documented"
+        assert any(
+            phrase in doc
+            for phrase in (
+                "保持独立",
+                "stay separated",
+                "the other person's MT4 Accounts",
+                "another person's MT4 Accounts",
+            )
+        ), "the isolation guarantee is not documented"
 
 
 def test_manifest_usage_hint_names_credential(client):
