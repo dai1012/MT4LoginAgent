@@ -256,6 +256,14 @@ History 是 append-only/read-only 审计记录，只显示：
 ```
 
 - `/mt4 A <credential>`：`A` 是本地 alias，第二个参数是 Rakuten 下发的 OTP 或 Demo 测试用的固定密码。命令目标永远是 Account alias；凭据只填密码 / 一次性 OTP，绝不能包含 Login ID。
+- 同一 workspace 多人共用时，在 Web Admin Slack 页的 Account 绑定里限制每人可操作的 alias，例如：
+
+  ```text
+  U_A -> [A]
+  U_B -> [B]
+  ```
+
+  两人在 workspace 成员目录里依然能看到彼此的 Slack 资料，但各自的 MT4 账号、命令结果和权限保持独立。
   凭据按**不透明字符串**处理，不假定任何格式：字母数字、符号、空格和 Unicode 都接受；
   只拒绝空值、含控制字符（NUL/CR/LF 等）的值，以及超过 128 字符的值。
 - `/mt4 GROUP1 123456`：按 Group 顺序执行。

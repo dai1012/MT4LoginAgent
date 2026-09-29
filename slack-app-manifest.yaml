@@ -16,7 +16,7 @@ features:
   slash_commands:
     - command: /mt4
       description: Login to a configured Rakuten MT4 account or group
-      usage_hint: "/mt4 <alias-or-group> <OTP> | /mt4 status"
+      usage_hint: "/mt4 <alias-or-group> <credential> | /mt4 status"
       should_escape: false
 oauth_config:
   scopes:

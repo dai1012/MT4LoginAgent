@@ -108,6 +108,7 @@
           <label class="checkbox"><input id="clear-app-token" type="checkbox"> 清除已保存的 App-level token</label>
           <label class="checkbox"><input id="clear-bot-token" type="checkbox"> 清除已保存的 Bot token</label>
           <label class="wide">Allowed Slack User IDs（每行一个；在 Slack 个人资料中查看 Member ID）<textarea id="slack-users" rows="5" placeholder="U0123456789"></textarea></label>
+          <div class="wide"><p class="muted">Allowed 决定谁能用 Agent；Account 绑定决定这个人能操作哪些 alias。没有绑定任何账号的用户显示“no accounts assigned”，将不能操作任何账号（fail-closed，不是全部账号）。只显示 alias，不显示 Login ID 与凭据。</p><div id="slack-bindings"></div></div>
           <div class="wide token-boundary">网络边界：此 Agent 只需要连接 Slack 官方 Socket Mode/API；MT4 使用其原有网络连接。没有 telemetry、analytics 或 AI API。</div>
           <div class="form-actions wide"><button type="submit" class="button">保存并重连</button></div>
         </form>

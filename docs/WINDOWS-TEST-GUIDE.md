@@ -169,6 +169,15 @@ Windows 上是**硬性要求**，至少需要这四个键：
 - 点 **Connection Test** → 显示 `Connected` 才算成功
 - 点 **保存并重连**
 
+同一 workspace 多人共用时，在 **Account 绑定**里限制每人可操作的 alias（Allowed 决定谁能用，没有绑定的用户什么都操作不了），例如：
+
+```
+U_A -> [A]
+U_B -> [B]
+```
+
+两人在 workspace 成员目录里依然能看到彼此的 Slack 资料，但各自的 MT4 账号、命令结果和权限保持独立。
+
 > 🔒 token 只写入本机 secrets 文件，页面**不会回显**原值。不要把 secrets 文件或含 token 的截图发给别人。
 
 ---
