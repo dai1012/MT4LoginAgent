@@ -1,80 +1,178 @@
 # Security Model
 
-本项目处理交易账户登录，发布前请把下面边界当作安全契约。
+What the Agent protects, what it deliberately does not, and where the limits are.
 
-## OTP 生命周期
+This document describes the design as implemented. Where a guarantee is enforced by
+convention rather than by code, or where a known limitation exists, it says so.
 
-- OTP 来自 Slack command 文本，由 `SecretStr` 包装。
-- Agent 只在当前登录任务的内存中使用 OTP。
-- OTP 不写入 `accounts.json`、`settings.json`、`history.jsonl`、日志、异常文本、临时文件、subprocess 命令行或 Web API。进程 dump/系统级内存抓取属于操作系统调试边界，Agent 无法阻止。
-- 为了防止任务结束后几秒内的第三方日志泄漏，进程内保留一个短 TTL、有限容量的脱敏摘要集合；它不持久化原始 OTP。
-- Slack 本身会保存用户发送的 command 消息；这是 Workspace 的消息记录，不是 Agent 的 History。使用私聊/受控频道并遵循 Slack retention 设置。
-- pytest、Mock、Web `GET` 均不会回显 OTP。
-- 如果 Windows worker 在 OTP 已填入后被硬终止，MT4 登录窗口可能仍显示该 OTP；这是进程被强制结束时的 UI 残留风险，不会进入 Agent 文件或日志。
+## 1. Scope
 
-## Slack
+The Agent runs on one Windows machine, owned by the person running it. It accepts a
+credential from Slack, types it into a MetaTrader 4 login form on that machine, and
+reports the outcome back to the person who asked.
 
-- Socket Mode 连接在 Agent 主动建立的出站 WebSocket 上。
-- allowlist 在解析 OTP 前执行。
-- 只接受 allowlist 中的 Slack User ID。
-- 同一 delivery 的重试/重连重复由 HMAC digest guard 抑制，guard 摘要不包含原始 OTP。
-- Slack App-level token、Bot token 只写入 `secrets.json`，API 只返回 configured 布尔值。
-- Socket Mode 失败会退避重连；连接状态在 Web/Slack 页面可见。
+It is not a multi-tenant service. It does not manage several people's machines, it has
+no admin rights over the terminal, and it is not exposed to a network.
 
-## Web Admin
+## 2. The credential
 
-- Uvicorn 固定绑定 `127.0.0.1`。
-- TrustedHost 限制 Host header。
-- API 写操作需要启动时生成的 `X-Admin-Token`；token 只放当前浏览器标签页的 `sessionStorage`。
-- Origin 检查拒绝跨源 Web API 请求。
-- 无 CORS；`Cache-Control: no-store`；CSP、`nosniff`、X-Frame-Options 已启用。
-- Web Admin 没有多用户账号系统。能以同一 Windows 用户权限运行本地进程，仍可能读取进程内存或数据目录；不要把 Agent 当成对同一用户恶意进程隔离的安全边界。
-- Account Login ID 会在本机 Web 页面显示，以方便审计；不要在共享桌面/录屏中暴露。
+A credential is the password or one-time code a person types. It is **opaque**: the
+Agent does not assume any format, because a broker's real code is letters and digits
+and a fixed Demo password is digits, and neither has a documented shape.
 
-## Files and secrets
+**Where it goes**
 
-- 默认数据目录在 `%LOCALAPPDATA%\RakutenMT4Agent`（Windows）。
-- `secrets.json` 保存 Slack token、Web admin token 和 dedup HMAC key；程序尽力 chmod 0600，Windows 依赖目录 ACL。
-- `.gitignore` 排除 secrets、runtime data、`.tmp`、`.bak`、editor swap 文件。
-- 同一 data-dir 同时只允许一个 Agent 实例（`agent.lock`）；Windows 上该锁的真实 ACL/UAC 行为仍需实机确认。
-- 备份软件可能复制 secrets；请使用受控磁盘和加密备份。
-- V1 没有接入 Windows Credential Manager/DPAPI；不要把这一限制误读为“Windows ACL 已验证”。
-- 泄漏 token 后立即在 Slack 撤销并重新生成。
+Slack delivers the slash command → the Agent parses it into a secret field → the login
+queue holds it in memory → the Win32 or UIA code writes it into the control → it is
+released. That is the whole path.
 
-## Network
+**Where it never goes**
 
-运行时主动连接只有：
+- the Agent's log, at any level, including exception tracebacks
+- `history.jsonl` and the Dashboard
+- `report.json`, `report.html` or the sanitised UIA tree
+- `settings.json` or `secrets.json`
+- any temporary file
+- a command line or process argument, so it cannot appear in the process list
+- a report filename or a URL
 
-1. Slack 官方 Socket Mode/API。
-2. MT4 自己的 broker/行情连接。
-3. 本机浏览器访问 `127.0.0.1`。
+**How that is enforced**
 
-安装阶段 `pip` 可能访问包索引。程序没有 telemetry、analytics、AI API、云端自建服务、Docker 或 Redis。
+1. **Structural.** No code path formats a credential into a message. Rejections and
+   errors carry a fixed reason, never the value.
+2. **Registration.** A credential in flight is registered as a live secret for the
+   duration of the operation, and every rendered value is scrubbed against the
+   registered set.
+3. **Pattern.** A key-based scrubber removes anything that looks like
+   `otp=`, `password:` and similar, and removes the remainder of a `/mt4` command
+   entirely. This is deliberately over-broad: it cannot recognise an arbitrary secret's
+   shape, so it does not try to.
 
-## Fail-closed guarantees
+**Known limitation.** The by-value scrubber ignores candidates shorter than four
+characters, because a very short string occurs by chance in ordinary text and
+substituting it would destroy the output. Short credentials therefore rely on layers 1
+and 2. Lowering that floor is not a fix; the correct handling is to never place the
+value in a message at all, which is what layer 1 guarantees.
 
-- 未知 alias/Group、未授权 sender、队列冲突：拒绝。
-- Login/OTP/Server/Login button 没有唯一明确 UIA selector：拒绝。
-- Profile 不可验证或多个进程匹配：拒绝，不向不确定窗口输入。
-- 没有匹配配置的认证主窗口（新建或状态变化）：不报告成功。
-- Slack ack/submit 失败：释放 dedup key，允许安全重试。
-- Windows worker 超时：终止独立子进程，不留下继续填表的线程。
+The `Detect Win32` inspection follows the same rule from the other direction: it reads
+control metadata only and never reads the value of an editable control, so running it
+cannot expose a login id, a server, or a credential.
 
-## Windows Acceptance Test Runner
+## 3. Web Admin
 
-- Test Runner 是现有 `LoginService`、`WindowsAutomation`、Slack gateway 和 Web Admin 的编排层，不是第二套登录实现。
-- Phase 1/2/3 默认只执行 SAFE 检查，不输入 OTP、不启动真实登录、不向真实 Slack 批量发消息。
-- Real Login、Group 和 Full Slack E2E 都必须由用户在 Web UI 明确确认。
-- Test Runner 的 OTP 只在进程内存中存在；不写入 command line、报告、UIA diagnostic、History、临时文件或 traceback。
-- UIA diagnostic 不读取密码控件明文 value，并对 Login ID 和节点数量做限制/脱敏。
-- HTML/JSON 报告只保存布尔型 `secret_leak_detected`；报告目录和文件使用本地私有权限，Windows 实际 ACL 仍需实机确认。
-- 故意错误 OTP、kill 进程、多实例、改系统时间、UAC、网络中断等破坏性测试默认是 `MANUAL_TEST_REQUIRED`。
-- macOS/Linux 页面和 CLI 只能显示 `NOT_RUN`/`WINDOWS_REAL_TEST_REQUIRED`，不能显示真实 Windows PASS。
-- `otp_max_age_seconds` 是 Agent stale-request cutoff，不是 Rakuten broker OTP validity；Agent 不知道 OTP 签发时间，也不做 broker preflight。
-- 旧 schema 允许 `otp_max_age_seconds` 到 900。迁移在 repository 边界完成：301..900 下调为上限 300 并记录警告，不把旧值当作新的有效时长；模型本身仍拒绝 900，避免以后有人把语义静默改宽。超出旧 schema 区间的值继续报错。
-- Group 只有在用户明确设置 `shared_otp_confirmed` 后才允许执行；多设备/多账户共享规则不由 Agent 猜测。
+Bound to **loopback only**. It is not reachable from the network, and the Agent does
+not open a public endpoint — Slack uses Socket Mode, an outbound WebSocket.
 
+Access additionally requires a shared admin token, sent in a request header. The
+token lives in `secrets.json` with owner-only permissions on Windows.
 
-## Reporting
+Every mutating request requires it, including Account creation, token changes and the
+test runner.
 
-不要提交真实 OTP、Login ID、token、完整异常 dump 或 Slack payload。报告问题时只提供：版本、平台、Account alias、错误 category、脱敏日志片段和 `WINDOWS_REAL_TEST_REQUIRED` 状态。
+## 4. Slack access control
+
+Two independent gates.
+
+1. **Allowlist** — a Member ID must be listed or the request is refused.
+2. **Bindings** — an allowed Member ID may operate only the Account aliases bound to
+   them.
+
+The second gate is **fail-closed**: an allowed person with no binding can operate
+nothing. Being added to the allowlist never implies access to every existing Account.
+
+Two further properties:
+
+- **No enumeration.** "Does not exist" and "exists but is not yours" produce
+  byte-identical replies. For a group target, the refusal never names the member that
+  was missing.
+- **No side effects on refusal.** A refused request is rejected before the dedup key is
+  taken, before the queue, and before anything is typed into MT4, so it cannot consume
+  a one-time code or occupy a login slot.
+
+## 5. Reply privacy
+
+Immediate acknowledgements, completion results, errors and `/mt4 status` are delivered
+to the requesting person only: an ephemeral message in a channel, and a normal message
+in a bot DM, which is already private. Nothing is posted to a channel for others to
+read.
+
+`/mt4 status` reports the caller's own assigned aliases and deliberately omits the
+total Account count and the queued and active job counts, which describe other people's
+work.
+
+## 6. Boundary this does not draw
+
+Two people in the same workspace can still see **each other's Slack profile** in the
+member directory, and Slack decides what else is visible about the App. That is Slack's
+surface, not the Agent's.
+
+The Agent guarantees the separation that matters: each person cannot list, address or
+observe another person's MT4 Accounts, cannot run a login against them, and cannot read
+their results.
+
+## 7. Multiple terminals
+
+Two enabled Accounts may not resolve to the same MT4 instance. The guard compares the
+canonicalised terminal path and working directory, case-insensitively, and refuses to
+create, update or enable a colliding Account.
+
+Without it, one person's login could silently run against another person's terminal.
+A disabled draft may share its source's paths while it is being set up; only enabling
+is checked.
+
+## 8. Fail-closed guarantees
+
+The Agent prefers refusing a request to guessing. Concretely, it will not:
+
+- start if a configuration file cannot be validated
+- write an Account that fails validation
+- type a credential into a control it could not identify unambiguously
+- claim a login succeeded without observing the configured authenticated window
+- apply a selector proposal while any required field is unresolved
+- accept a command-line, target or Group that is not configured for this user
+- report a success it did not verify: anything requiring a real machine returns
+  `WINDOWS_REAL_TEST_REQUIRED` rather than a fabricated pass
+
+## 9. Network
+
+| Direction | Purpose |
+|---|---|
+| Outbound | Slack Socket Mode WebSocket; nothing else |
+| Local | Web Admin on loopback |
+
+The Agent makes no outbound request to a broker. The credential is typed into a
+desktop application, not posted to a web API.
+
+## 10. Files on disk
+
+| File | Contains |
+|---|---|
+| `secrets.json` | Slack tokens, admin token, dedup key. Owner-only permissions |
+| `settings.json` | non-secret configuration: web port, allowlist, bindings, timeouts |
+| `accounts.json` | login ids and selectors. **Not** a credential, but still private |
+| `history.jsonl` | who asked for what, when, and how it went. No credential |
+| `logs/`, `reports/` | sanitised; every rendered value is scrubbed |
+
+All of these live in the data directory and are excluded from version control. See
+[.gitignore](.gitignore) for the full list.
+
+## 11. Reporting a vulnerability
+
+Please report privately rather than in a public issue. If this repository has
+**Security** → **Report a vulnerability** enabled, use it. Otherwise open an issue
+asking for a private channel, or contact the maintainer through the repository owner
+listing.
+
+Please do not include a real credential, a real token, a real account number, or a
+screenshot of a live session. A description of the behaviour, the version, and the
+relevant part of the sanitised report is enough.
+
+## 12. Known limitations
+
+| Limitation | Effect |
+|---|---|
+| Slack member directory | co-workers can see each other's Slack profile; the Agent cannot and does not try to hide that |
+| Web Admin is token-gated, not user-gated | anyone holding the admin token can see all Accounts |
+| By-value scrubbing needs 4+ characters | very short credentials rely on the structural guarantee instead |
+| A shared Windows account | anyone signed in to that Windows session can see the Agent's window and data directory |
+| No protection from a compromised host | the Agent assumes the machine it runs on is not hostile |

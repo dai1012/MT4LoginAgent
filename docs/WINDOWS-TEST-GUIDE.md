@@ -6,6 +6,15 @@
 > 本手册是 [`docs/WINDOWS-MT4-TEST.md`](WINDOWS-MT4-TEST.md) 清单的完整展开版。
 > 只想看勾选清单的，去那一份即可。
 
+**相关文档**
+
+| 文档 | 用途 |
+|---|---|
+| [SLACK-SETUP.md](SLACK-SETUP.md) | Slack App、两个 token、allowlist、**每个 Slack 用户绑定哪些 Account**、结果私密投递 |
+| [NEW-MT4-ADAPTER.md](NEW-MT4-ADAPTER.md) | 换券商 / 换 MT4 build 怎么适配、哪些字段稳定、**Win32 Inspector** 怎么用 |
+| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | 报错症状对照表（本手册 §10 只列最常见几条） |
+| [../SECURITY.md](../SECURITY.md) | 凭据处理与安全边界 |
+
 ---
 
 ## 0. 全流程速览
@@ -229,6 +238,34 @@ manifest 已开启可写的 **Messages** tab。点 Bot 的 **Home → Messages**
 - 启用后 `Apply detected selectors` 不再可点 —— 这条路线用原生 id，不需要 UIA Automation ID。
 - 页面顶部 Step 条会直接写明"当前 Real Login 走 Win32 dialog fallback"。
 
+## 4c. Step 卡片颜色到底代表什么
+
+Windows Test 页面顶部有 5 张 Step 卡片。**颜色是汇总，不是某一行**：
+
+| 卡片 | 含义 |
+|---|---|
+| `FAIL` | 存在真正阻断的失败项 |
+| `WARN` | 存在真实告警/降级，但流程仍可继续 |
+| `PASS` / `READY` | 自动检查全部通过 |
+| `not_run` | 该 Step 还没跑过 |
+
+**`MANUAL` 不会把卡片染黄。** MANUAL 表示"这一步还需要你自己做一个决定"，例如破坏性测试、或必须你本人在 Slack 里发一次 `/mt4 status`。这类项目会在副文案里显示成计数：
+
+```text
+已通过 · 2 manual checks remaining
+```
+
+**真正要处理的信号：**
+
+- **真 WARN**：token 配错、Socket 断连、解析不出可用控件路径、UIA 不可用且没有可用的 Win32 route
+- **真 FAIL**：环境检查失败、进程解析不到、对话框找不到、控件 id 冲突、登录未通过
+
+**每张卡片下面的表格行保留自己的真实状态**（`PASS` / `WARN` / `MANUAL` / `FAIL`），不会被卡片汇总改写。想判断某一步到底发生了什么，**看表格，不看卡片颜色**。
+
+**同一个检查重跑后按最新结果算。** 例如第一次 Real Login 失败、第二次成功，Step 4 会变回 `PASS`；早期失败不会一直挂在卡片上。
+
+---
+
 ## 5. Step 1 ~ Step 5 逐步操作
 
 > **Step 卡片的颜色含义**
@@ -331,6 +368,64 @@ manifest 已开启可写的 **Messages** tab。点 Bot 的 **Home → Messages**
   Group 是**排队顺序执行**的，后排成员可能因排队超期返回 `otp_expired`，
   **此时 Agent 不会接触 MT4**，换一个 OTP 重试即可。
   同一 Group 内**第一个成员登录成功后**，后续成员不再受这个截断拦截。
+
+---
+
+## 5b. 多实例 A/B、auto-open 与新券商适配
+
+### 多实例 A/B（两个终端同时跑）
+
+MetaTrader 官方建议：同时跑多个账户时，**每个终端装到不同目录**。Agent 也依赖这一点 —— 它靠 `terminal_path` + **进程工作目录**区分终端。
+
+| 步骤 | 做法 |
+|---|---|
+| 装第二个终端 | 装到**另一个文件夹**，例如 `C:\MT4\Broker-A\` 和 `C:\MT4\Broker-B\` |
+| 建 Account B | 点 Account A 那行的 **复制**，保留 broker/selector/Win32 字段 |
+| **必须改** | `terminal_path` → B 的安装目录；`profile_path` → B 的进程工作目录 |
+| 必须改 | `alias`、`login_id`、`display_name` |
+| 先别启用 | 复制出来的 Account 默认 `enabled=false`，改完路径再启用 |
+
+> ⚠️ `profile_path` 是**进程工作目录（cwd）**，不是 MT4 "Open Data Folder"。填 data folder 永远匹配不上。
+
+**护栏**：两个 enabled Account 解析到同一实例会被拒绝（422），提示"每个并发 MT4 Account 需要独立的安装目录和独立的工作目录"。disabled 草稿允许暂时与 source 相同。
+
+### auto-open 登录框（不用手开小窗口）
+
+Step 2 Detect 会通过**窗口自己的菜单命令**打开登录框，不使用屏幕坐标，也不盲发按键。
+
+- 登录框**已经打开** → 直接用
+- 没打开 → 尝试 auto-open
+- 该券商菜单文案不在已知列表 → auto-open 失败，手动打开登录框后重试即可，后续步骤不受影响
+
+### Win32 Inspector（换券商/换 build 用）
+
+**适用**：不同券商，或同一券商的不同 MT4 build。
+**不适用**：同券商同 build 的第二个账号 —— 那种情况直接用 **复制**，selector 全部还是对的。
+
+```
+新建 Account  →  启动目标 MT4  →  Windows Test: Detect Win32
+              →  审阅建议  →  Apply detected Win32 settings
+              →  手动复制两条 title 建议  →  Real Login 验证
+```
+
+- **只读元数据**：读控件 id、class、非编辑控件的文本；**从不读 Edit 的值**，所以不可能泄漏 login id / server / 凭据
+- **不自动保存**：只有你点 Apply 才写入
+- **不猜**：任何字段无法唯一判定时标 `NEEDS_CONFIRMATION` 且**不给值**；只要有一个必需字段未确认，Apply 按钮就不出现
+- **只写 Win32 fallback**：`alias` / `login_id` / `server` / `terminal_path` / `profile_path` 一律不动
+- 面板会显示**该 build 真实的菜单文案**（只读参考）—— 这就是 auto-open 失败时最快的排查入口
+
+详见 [NEW-MT4-ADAPTER.md](NEW-MT4-ADAPTER.md)。
+
+### title 建议
+
+`Detect Win32` 会给出两条**建议**（仅供复制，Agent 永不自动写入）：
+
+| 字段 | 建议形态 |
+|---|---|
+| `window_title_regex` | `^<当前对话框标题，已转义>$` |
+| `success_window_title_regex` | `^<当前认证后主窗口标题>$`，其中**你自己的 login id 已被泛化成 `.*`** |
+
+泛化的意义：写死账号号的表达式换个账号就失效；泛化后同一表达式对同券商其它账号继续有效。
 
 ---
 
@@ -442,6 +537,26 @@ manifest 已开启可写的 **Messages** tab。点 Bot 的 **Home → Messages**
 | Group 被拒绝 | `shared_otp_confirmed` 未设置 | 回 §3.3 勾选并保存 |
 | 报告 `PARTIAL` | 有 WARN / MANUAL / NOT_RUN | 展开报告逐项看；**PARTIAL 不等于失败** |
 | `otp_expired` | 排队超过 Agent 截断 | 换新 OTP 重试；不是券商 OTP 失效 |
+
+---
+
+## 10b. 哪些是真机验证过、哪些只是 unit tested
+
+这一节很重要，避免把测试套件绿灯当成真机证据。
+
+| 能力 | 真机验证 | 说明 |
+|---|---|---|
+| Win32 dialog fallback 全链路 | ✅ **已验证** | Rakuten MT4 真实 32-bit 终端：找窗、填 Login ID、填凭据、选 server、点击 Login |
+| 多实例 A/B 进程隔离 | ✅ **已验证** | 两个 terminal.exe 实例，靠独立安装目录 + cwd 区分 |
+| Real Login 成功判定 | ✅ **已验证** | 登录框关闭 + 匹配 success regex 的窗口存在/变化 → SUCCESS |
+| auto-open 菜单命令 | ✅ **已验证** | 通过 WM_COMMAND 打开登录框，无坐标无盲打 |
+| 64-bit Python 控 32-bit MT4 | ✅ **已验证** | 枚举、读 class/ctrl-id/文本全部正常 |
+| Detect Win32 Inspector | ❌ **仅 unit tested** | fake 原生控件树；**真机对话框、真菜单、真实页面渲染均未跑过** |
+| Full Slack E2E | ❌ 未验证 | 仍需一次完整真机 Slack 往返 |
+| Group 登录 | ❌ 未验证 | Group 业务当前暂停 |
+| 每用户 Account 绑定 + 私密投递 | ❌ 仅 unit tested | Slack 端真实多用户行为未验证 |
+
+> **原则**：任何依赖真机而未验证的项，一律返回 `WINDOWS_REAL_TEST_REQUIRED`，**不会**把 mock 或静态检查当成真实登录成功。
 
 ---
 

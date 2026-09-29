@@ -1,6 +1,6 @@
 # Pre-Windows AI Hardening 实施报告
 
-项目：`<project-root>/`
+项目：本仓库（`MT4LoginAgent/`）
 
 ## 结论
 
