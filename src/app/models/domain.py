@@ -24,7 +24,17 @@ _WIN32_FALLBACK_KEYS = (
     "login_button",
 )
 SLACK_USER_ID_PATTERN = re.compile(r"^[UW][A-Z0-9]{2,31}$", re.IGNORECASE)
-OTP_PATTERN = re.compile(r"^[0-9]{4,10}$")
+# Rakuten does not issue a fixed-length numeric code. A credential observed on a
+# real account mixed ASCII upper/lower case letters and digits and was 15
+# characters long, so the previous 4-10 digit rule rejected a valid value.
+#
+# This change only widens the rule. The floor stays at 4 so nothing that was
+# accepted before becomes rejected, and the ceiling moves to 32 because the
+# observed real value exceeds the old 10. A single sample is not evidence for a
+# hard 15-character length, so the range stays deliberately wider. Pure numeric
+# values still pass, which is what a fixed numeric Demo credential needs. Empty
+# values, whitespace, non-ASCII look-alikes and over-long values stay rejected.
+OTP_PATTERN = re.compile(r"^[A-Za-z0-9]{4,32}$")
 _NESTED_QUANTIFIER_RE = re.compile(r"\([^)]*(?:[+*?{][^)]*)\)[+*?{]")
 _ALTERNATION_QUANTIFIER_RE = re.compile(r"\([^)]*\|[^)]*\)[+*?{]")
 _ADJACENT_UNBOUNDED_RE = re.compile(r"(?:\.\*|\.\+|\w\*|\w\+)\s*(?:\.\*|\.\+|\w\*|\w\+)")
@@ -394,7 +404,9 @@ class LoginRequest:
         if not value:
             raise ValueError("OTP must not be empty")
         if not OTP_PATTERN.fullmatch(value):
-            raise ValueError("OTP must contain 4 to 10 ASCII digits")
+            raise ValueError(
+                "OTP must be 4 to 32 ASCII alphanumeric characters without whitespace"
+            )
 
 
 class AutomationResult(APIModel):

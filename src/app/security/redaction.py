@@ -11,9 +11,14 @@ from contextvars import ContextVar, Token
 
 _SENSITIVE_CONTEXT: ContextVar[tuple[str, ...]] = ContextVar("sensitive_context", default=())
 _SLACK_TOKEN_RE = re.compile(r"\b(?:xox[baprs]-|xapp-)[A-Za-z0-9-]+\b", re.IGNORECASE)
-_COMMAND_RE = re.compile(r"(?i)(/mt4\s+)([A-Za-z0-9_.-]+)(\s+)(\d{4,10})\b")
+# These must stay in step with models.domain.OTP_PATTERN. A real Rakuten
+# credential mixed letters and digits and was 15 characters long, so a 4-10
+# digit pattern would fail to redact a live value that redact_text cannot
+# otherwise see by value.
+_OTP_TOKEN = r"[A-Za-z0-9]{4,32}"
+_COMMAND_RE = re.compile(rf"(?i)(/mt4\s+)([A-Za-z0-9_.-]+)(\s+)({_OTP_TOKEN})\b")
 _SLACK_TEXT_RE = re.compile(
-    r"(?i)([\"']?text[\"']?\s*[:=]\s*[\"']?)([A-Za-z0-9_.-]+)(\s+)(\d{4,10})(?=[\"']?[,}\s])"
+    rf"(?i)([\"']?text[\"']?\s*[:=]\s*[\"']?)([A-Za-z0-9_.-]+)(\s+)({_OTP_TOKEN})(?=[\"']?[,}}\s])"
 )
 _KEY_VALUE_RE = re.compile(
     r"(?i)([\"']?)\b(otp|one[-_ ]?time(?:\s+password)?|password|app[_ -]?token|bot[_ -]?token)\b"

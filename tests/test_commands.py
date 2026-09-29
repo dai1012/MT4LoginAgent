@@ -22,7 +22,7 @@ def test_parse_login_and_status():
     [
         "A abc",
         "A 123",
-        "A 12345678901",
+        "A " + "9" * 33,  # over the 32 character ceiling
         "",
         "A 123456 extra",
         "/mt4foo 123456",

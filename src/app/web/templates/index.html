@@ -139,7 +139,7 @@
         <button class="button" data-action="run-test-slack">Run Phase 3</button>
         <h3>Phase 4 — Real Login（必须人工确认）</h3>
         <div class="warning-box">REAL ACCOUNT ACTION：这会尝试登录选中的 Rakuten MT4。开始前请人工确认 Rakuten 当前不处于已知 maintenance/offline 时段；当前没有 broker preflight。OTP 只在内存中使用，不进入报告、日志或 History。</div>
-        <label>OTP（仅本次测试）<input id="test-otp" type="password" autocomplete="off" placeholder="测试 OTP"></label>
+        <label>Rakuten OTP / Demo 测试密码（仅本次测试）<input id="test-otp" type="password" autocomplete="off" placeholder="broker 下发的值，4~32 位 ASCII 字母或数字"><small class="muted">填 Rakuten 实际下发的 OTP（可能是大小写字母数字混合、长度超过 10）；Demo 联调用固定数字密码也照常接受。不含空格。</small></label>
         <label class="checkbox"><input id="test-broker-confirm" type="checkbox"> 我已人工确认 Rakuten 当前不处于已知 maintenance/offline 时段（当前没有 broker preflight）</label>
         <label class="checkbox"><input id="test-real-confirm" type="checkbox"> 我确认这是安全测试 Account，并已准备好新的 OTP</label>
         <button class="button" data-action="run-test-real-login">Start real login test</button>

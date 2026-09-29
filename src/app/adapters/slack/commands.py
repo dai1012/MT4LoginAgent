@@ -4,9 +4,9 @@ import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from app.models.domain import LoginRequest
+from app.models.domain import OTP_PATTERN, LoginRequest
 
-OTP_RE = re.compile(r"^[0-9]{4,10}$")
+OTP_RE = OTP_PATTERN
 TARGET_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 MAX_COMMAND_TEXT_LENGTH = 256
 
@@ -47,7 +47,7 @@ def parse_slash_command(text: str) -> ParsedCommand:
     if not TARGET_RE.fullmatch(target):
         raise CommandError("alias 或 group 名称格式无效")
     if not OTP_RE.fullmatch(otp):
-        raise CommandError("OTP 必须是 4 到 10 位数字")
+        raise CommandError("OTP 必须是 4 到 32 位 ASCII 字母或数字，且不含空格")
     return ParsedCommand(CommandKind.LOGIN, target=target, otp=otp)
 
 
