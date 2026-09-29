@@ -480,9 +480,17 @@ class WindowsAutomation:
         from ctypes import wintypes
 
         user32 = ctypes.windll.user32
+        # EnumWindows takes a function pointer. Passing a bare Python callable fails
+        # with ctypes.ArgumentError, so wrap it in the exact WNDENUMPROC signature and
+        # keep a strong reference alive for the duration of the call. WINFUNCTYPE only
+        # exists on Windows; CFUNCTYPE is its portable equivalent elsewhere.
+        enum_proc_type = getattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE)
+        enum_proc = enum_proc_type(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        user32.EnumWindows.argtypes = [enum_proc, wintypes.LPARAM]
+        user32.EnumWindows.restype = wintypes.BOOL
         rows: list[tuple[int, int, str, str]] = []
 
-        def callback(handle: int, _param: int) -> bool:
+        def collect(handle: int, _param: int) -> bool:
             if not user32.IsWindow(handle):
                 return True
             class_buffer = ctypes.create_unicode_buffer(256)
@@ -498,6 +506,7 @@ class WindowsAutomation:
             rows.append((int(handle), int(process_id.value), class_buffer.value, title))
             return True
 
+        callback = enum_proc(collect)
         user32.EnumWindows(callback, 0)
         return rows
 

@@ -10,6 +10,8 @@ Nothing here runs a real login: no process, no window, no keystroke and no OTP.
 
 from __future__ import annotations
 
+import ctypes
+from ctypes import wintypes
 from types import SimpleNamespace
 
 import pytest
@@ -366,3 +368,137 @@ def test_error_categories_are_unchanged_for_the_win32_route():
     # The fallback must not invent new categories; it reuses UI_CONTROL_NOT_FOUND.
     assert ErrorCategory.UI_CONTROL_NOT_FOUND.value == "ui_control_not_found"
     assert LoginStatus.FAILED.value == "failed"
+
+
+# Native top-level enumeration must satisfy the real EnumWindows contract.
+
+WINDOWS = [
+    (332886, 27784, "#32770", "Rakuten MetaTrader 4"),
+    (66762, 27784, "MetaQuotes::MetaTrader::4.00", "RakutenSecurities-Demo - demo"),
+    (5150, 9000, "Chrome_WidgetWin_1", ""),
+]
+
+
+def _install_fake_user32(monkeypatch, rows):
+    by_handle = {row[0]: row for row in rows}
+    seen = {}
+
+    def is_window(handle):
+        return handle in by_handle
+
+    def get_class_name(handle, buffer, size):
+        value = by_handle[handle][2]
+        buffer.value = value
+        return len(value)
+
+    def get_text_length(handle):
+        return len(by_handle[handle][3])
+
+    def get_text(handle, buffer, size):
+        value = by_handle[handle][3]
+        buffer.value = value
+        return len(value)
+
+    def get_thread_process_id(handle, out):
+        ctypes.cast(out, ctypes.POINTER(wintypes.DWORD))[0] = by_handle[handle][1]
+        return 1
+
+    def enum_windows(callback, param):
+        seen["callback"] = callback
+        seen["argtypes"] = getattr(enum_windows, "argtypes", None)
+        seen["restype"] = getattr(enum_windows, "restype", None)
+        for handle in by_handle:
+            if callback(handle, param) == 0:
+                break
+        return 1
+
+    user32 = SimpleNamespace(
+        IsWindow=is_window,
+        GetClassNameW=get_class_name,
+        GetWindowTextLengthW=get_text_length,
+        GetWindowTextW=get_text,
+        GetWindowThreadProcessId=get_thread_process_id,
+        EnumWindows=enum_windows,
+    )
+    monkeypatch.setattr(ctypes, "windll", SimpleNamespace(user32=user32), raising=False)
+    return seen
+
+
+def test_enum_top_windows_passes_a_ctypes_callback_not_a_bare_function(monkeypatch):
+    seen = _install_fake_user32(monkeypatch, WINDOWS)
+    WindowsAutomation._enum_top_windows()
+    callback = seen["callback"]
+    assert isinstance(callback, ctypes._CFuncPtr)
+    assert not callable(getattr(callback, "__code__", None))
+    argtypes = seen["argtypes"]
+    assert argtypes, "EnumWindows.argtypes must be declared for the callback"
+
+
+def test_enum_top_windows_declares_the_standard_wnd_enumproc_signature(monkeypatch):
+    seen = _install_fake_user32(monkeypatch, WINDOWS)
+    WindowsAutomation._enum_top_windows()
+    argtypes = seen["argtypes"]
+    proc_type = argtypes[0]
+    assert proc_type is type(seen["callback"])
+    # BOOL is ctypes' default type (c_long) and is therefore omitted from _argtypes_.
+    assert proc_type._argtypes_ == (wintypes.HWND, wintypes.LPARAM)
+    assert argtypes[1] is wintypes.LPARAM
+    assert seen["restype"] is wintypes.BOOL
+
+
+def test_enum_top_windows_collects_handle_pid_class_and_title(monkeypatch):
+    _install_fake_user32(monkeypatch, WINDOWS)
+    rows = WindowsAutomation._enum_top_windows()
+    assert rows == WINDOWS
+    assert (332886, 27784, "#32770", "Rakuten MetaTrader 4") in rows
+    assert rows[-1][3] == ""
+
+
+def test_enum_top_windows_drives_the_real_dialog_lookup(monkeypatch):
+    """The measured dialog must satisfy every precondition on a real machine."""
+    _install_fake_user32(monkeypatch, WINDOWS)
+    dialog, _parts = build_dialog()
+    adapter = make_adapter(dialog)
+    account = make_account()
+    rows = WindowsAutomation._enum_top_windows()
+    import re
+
+    expression = re.compile(account.window_title_regex)
+    pids = adapter._process_ids = lambda acct: [27784]
+    matches = [
+        handle
+        for handle, pid, class_name, title in rows
+        if pid in set(pids(account))
+        and class_name == account.win32_fallback.dialog_class
+        and expression.search(title)
+    ]
+    assert matches == [332886]
+    assert adapter._win32_dialog(pids(account), account) is dialog
+
+
+def test_discovery_keeps_a_programming_fault_visible(monkeypatch):
+    from app.testing.mt4_discovery import _win32_discovery
+
+    adapter = make_adapter(None)
+
+    def boom(_pids, _account):
+        raise ctypes.ArgumentError(1, "TypeError")
+
+    adapter._win32_dialog = boom
+    result, found = _win32_discovery(adapter, make_account(), [27784])
+    assert found is False
+    assert result.id == "WIN32_DIALOG_DISCOVERY"
+    assert "ArgumentError" in result.technical_detail
+    assert SECRET_OTP not in result.technical_detail
+
+
+def test_discovery_stays_quiet_when_the_dialog_simply_is_not_there(monkeypatch):
+    from app.testing.mt4_discovery import _win32_discovery
+
+    _install_fake_user32(monkeypatch, WINDOWS)
+    dialog, _parts = build_dialog()
+    adapter = make_adapter(dialog)
+    result, found = _win32_discovery(adapter, make_account(), [1])
+    assert found is False
+    assert "ArgumentError" not in result.technical_detail
+    assert result.technical_detail.endswith("the dialog was not usable")

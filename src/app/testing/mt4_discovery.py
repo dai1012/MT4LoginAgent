@@ -147,10 +147,14 @@ def _control_metadata(control: Any, account: AccountConfig) -> dict[str, Any]:
 
 def _win32_discovery(adapter: Any, account: AccountConfig, pids: list[int]) -> tuple[Any, bool]:
     """Report whether the opted-in Win32 login dialog and its ids are usable."""
+    error = ""
     try:
         dialog = adapter._win32_dialog(pids, account)
-    except Exception:
+    except Exception as exc:
+        # A programming or environment fault must stay visible instead of being
+        # reported as "no dialog matched".
         dialog = None
+        error = f"{type(exc).__name__}: {exc}"
     if dialog is None:
         return (
             _result(
@@ -159,7 +163,11 @@ def _win32_discovery(adapter: Any, account: AccountConfig, pids: list[int]) -> t
                 TestStatus.WARN,
                 "No Win32 login dialog satisfied every precondition (pid, dialog class, "
                 "window_title_regex, anchor texts, control ids).",
-                detail="win32_fallback enabled but the dialog was not usable",
+                detail=(
+                    f"win32_fallback enabled but the dialog was not usable; {error}"
+                    if error
+                    else "win32_fallback enabled but the dialog was not usable"
+                ),
                 action="Open the login dialog, then re-check dialog_class, anchors and ids.",
                 severity=TestSeverity.HIGH,
             ),
