@@ -221,6 +221,8 @@ Bot token 正确不代表 `/mt4` 已注册；如果命令没有反应，检查 M
 
 保存前可以点击 **Test**，但它只是静态配置检查，不会启动 MT4 或连接 UIA；真实 Automation ID、control type 和窗口状态仍需实机验证。Windows 缺少 Profile、selector 或锚定 success regex 时，服务端会返回具体失败项，而不是只显示“无效配置”。
 
+点击 Account 行的 **复制**可以从现有账号新建副本：server、process、title 正则、launch 参数、UIA IDs/titles、save 选项和整个 Win32 fallback 会带过来；alias 与 Login ID 清空，Name 后缀“副本”，新账号默认不启用，保存时只创建不修改源账号。若源 success 正则包含源 Login ID，会被清空并提示改用稳定表达式。terminal 路径与 working directory 只是预填：第二个同时运行的账号必须改成独立的 terminal 安装目录和独立的 working directory，改好后再启用。
+
 ### Group
 
 - Group 名称不能和 Account alias 重复。
@@ -253,7 +255,7 @@ History 是 append-only/read-only 审计记录，只显示：
 /mt4 GROUP1 123456
 ```
 
-- `/mt4 A <credential>`：`A` 是本地 alias，第二个参数是 Rakuten 下发的 OTP 或 Demo 测试用的固定密码。
+- `/mt4 A <credential>`：`A` 是本地 alias，第二个参数是 Rakuten 下发的 OTP 或 Demo 测试用的固定密码。命令目标永远是 Account alias；凭据只填密码 / 一次性 OTP，绝不能包含 Login ID。
   凭据按**不透明字符串**处理，不假定任何格式：字母数字、符号、空格和 Unicode 都接受；
   只拒绝空值、含控制字符（NUL/CR/LF 等）的值，以及超过 128 字符的值。
 - `/mt4 GROUP1 123456`：按 Group 顺序执行。

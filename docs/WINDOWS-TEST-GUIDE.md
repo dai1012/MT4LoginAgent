@@ -110,6 +110,8 @@ Web Admin local admin token (keep private): <一串字符>
 保存后，在列表里点 **Test**，确认 Config 显示 `valid`。
 若显示 `invalid`，Issues 列会写明缺哪一项。
 
+**从 A 加 B：** 点 A 所在行的 **复制**，会用 A 的 server、路径、正则、UIA 配置预填一个新账号表单（标题显示“复制 A 为新 Account”）。alias 与 Login ID 会清空、Name 后缀“副本”、新账号默认不启用，保存只创建不改 A。terminal 路径与 working directory 只是预填：**第二个同时运行的账号必须装在独立的 terminal 安装目录、用独立的 working directory**，改好后再启用。success 正则若包含 A 的 Login ID 会被清空，改用锚定 broker / server 的稳定表达式。Slack 里永远用 `/mt4 <alias> <凭据>`：目标是 alias，凭据只填密码 / 一次性 OTP，不能包含 Login ID。
+
 ### 3.2 UIA control IDs 怎么填
 
 Windows 上是**硬性要求**，至少需要这四个键：

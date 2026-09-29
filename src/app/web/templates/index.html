@@ -45,17 +45,18 @@
       <div class="section-heading"><div><p class="eyebrow">LOCAL CATALOG</p><h2>Accounts</h2><p class="muted">Login ID 和路径只保存在本机数据目录，不会从 Slack 接收。</p></div><button class="button" data-action="new-account">新增 Account</button></div>
       <div id="account-editor" class="editor hidden">
         <h3 id="account-editor-title">新增 Account</h3>
+        <div id="account-duplicate-warning" class="warning-box hidden">正在创建副本：terminal 路径与 working directory 已从源账号填入。第二个同时运行的账号必须使用独立的 terminal 安装目录和独立的 working directory，改好这两个路径后再启用新账号。</div>
         <form id="account-form" class="form-grid">
           <input type="hidden" id="account-id">
           <label>Name<input id="account-display-name" required maxlength="100" placeholder="Rakuten-A"></label>
-          <label>Alias<input id="account-alias" required maxlength="64" placeholder="A"></label>
+          <label>Alias<input id="account-alias" required maxlength="64" placeholder="A"><small class="muted" id="account-command-preview"></small><small class="muted">Slack 命令目标是 Account alias；凭据只填密码 / 一次性 OTP，不能包含 Login ID。</small></label>
           <label>Login ID<input id="account-login-id" required maxlength="128" autocomplete="off"></label>
           <label>Server<input id="account-server" required maxlength="128" placeholder="RakutenMT4"></label>
           <label class="wide">MT4 executable path<input id="account-terminal-path" required maxlength="1024" placeholder="C:\\Program Files\\Rakuten\\terminal.exe"></label>
           <label>Process name (optional)<input id="account-process-name" maxlength="128" placeholder="terminal.exe"></label>
           <label>MT4 process working directory (cwd) — required on Windows to disambiguate instances; this is NOT the MT4 Data Folder / Open Data Folder<textarea id="account-profile-path" rows="1" maxlength="1024" placeholder="C:\\Program Files (x86)\\Rakuten MetaTrader 4"></textarea></label>
           <label>Login window title regex (required on Windows)<input id="account-window-regex" maxlength="256" placeholder="^Rakuten MetaTrader 4$"></label>
-          <label>Authenticated main-window title regex (anchored; required for verified Windows success)<input id="account-success-window-regex" maxlength="256" placeholder="^Rakuten.*Demo - .* - Rakuten Securities, Inc\.$"><small class="muted">只锚定 broker / server / account 类型等稳定特征，不要写具体账号 ID、金额或会变的文字；带具体账号的标题会在账号变更后失效。</small></label>
+          <label>Authenticated main-window title regex (anchored; required for verified Windows success)<input id="account-success-window-regex" maxlength="256" placeholder="^Rakuten.*Demo - .* - Rakuten Securities, Inc\.$"><small class="muted">只锚定 broker / server / account 类型等稳定特征，不要写具体账号 ID、金额或会变的文字；带具体账号的标题会在账号变更后失效。</small><small class="muted" id="account-success-regex-hint"></small></label>
           <label>Launch arguments (JSON array)<input id="account-launch-args" placeholder='["/portable"]'></label>
           <label class="checkbox"><input id="account-enabled" type="checkbox" checked> Enabled</label>
           <label class="checkbox"><input id="account-save-login" type="checkbox"> Save login information when UI provides it (off by default)</label>
