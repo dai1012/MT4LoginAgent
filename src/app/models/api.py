@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pydantic import Field, SecretStr, field_validator
 
-from app.models.domain import APIModel, AutomationMode
+from app.models.domain import APIModel, AutomationMode, check_credential
 
 
 class AccountEnabledUpdate(APIModel):
@@ -40,10 +40,18 @@ class TestPhaseRequest(APIModel):
 
 class RealLoginRequest(APIModel):
     account_id: str = Field(min_length=1, max_length=64)
+    # Opaque credential; the field keeps its historical name for compatibility.
     otp: SecretStr | None = None
     confirmed: bool = False
     broker_confirmed: bool = False
     full_slack: bool = False
+
+    @field_validator("otp")
+    @classmethod
+    def validate_credential(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is not None:
+            check_credential(value.get_secret_value())
+        return value
 
 
 class TestSelectorApplyRequest(APIModel):
@@ -56,6 +64,12 @@ class GroupTestRequest(APIModel):
     otp: SecretStr
     confirmed: bool = False
     broker_confirmed: bool = False
+
+    @field_validator("otp")
+    @classmethod
+    def validate_credential(cls, value: SecretStr) -> SecretStr:
+        check_credential(value.get_secret_value())
+        return value
 
 
 class SlackAwaitRequest(APIModel):

@@ -70,7 +70,8 @@ Web Admin
 ### 支持
 
 - Slack Bolt Socket Mode，无需公网 HTTP endpoint。
-- `/mt4 <alias> <credential>`、`/mt4 <group> <credential>`、`/mt4 status`。credential 为 4~32 位 ASCII 字母或数字（不含空格）。
+- `/mt4 <alias> <credential>`、`/mt4 <group> <credential>`、`/mt4 status`。
+  `<credential>` 是不透明的登录凭据（密码或一次性 OTP），可以包含空格与符号；命令里第一个 token 是 alias/group，其后的**全部剩余文本**就是凭据。
 - Slack User ID allowlist、重连、重复 delivery 去重。
 - 多 Account/Group CRUD、顺序执行、部分失败继续。
 - Windows terminal.exe 启动/复用、Profile 匹配、多实例 fail closed。
@@ -253,7 +254,8 @@ History 是 append-only/read-only 审计记录，只显示：
 ```
 
 - `/mt4 A <credential>`：`A` 是本地 alias，第二个参数是 Rakuten 下发的 OTP 或 Demo 测试用的固定密码。
-  格式为 **4~32 位 ASCII 字母或数字，不含空格** —— Rakuten 实际下发的值可能是大小写字母与数字混合，长度会超过 10 位；纯数字也照常接受。
+  凭据按**不透明字符串**处理，不假定任何格式：字母数字、符号、空格和 Unicode 都接受；
+  只拒绝空值、含控制字符（NUL/CR/LF 等）的值，以及超过 128 字符的值。
 - `/mt4 GROUP1 123456`：按 Group 顺序执行。
 - `/mt4 status`：查看 Agent/Slack/队列状态。
 - allowlist 在解析 OTP 前检查。

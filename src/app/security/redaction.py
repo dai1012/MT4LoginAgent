@@ -11,14 +11,20 @@ from contextvars import ContextVar, Token
 
 _SENSITIVE_CONTEXT: ContextVar[tuple[str, ...]] = ContextVar("sensitive_context", default=())
 _SLACK_TOKEN_RE = re.compile(r"\b(?:xox[baprs]-|xapp-)[A-Za-z0-9-]+\b", re.IGNORECASE)
-# These must stay in step with models.domain.OTP_PATTERN. A real Rakuten
-# credential mixed letters and digits and was 15 characters long, so a 4-10
-# digit pattern would fail to redact a live value that redact_text cannot
-# otherwise see by value.
-_OTP_TOKEN = r"[A-Za-z0-9]{4,32}"
-_COMMAND_RE = re.compile(rf"(?i)(/mt4\s+)([A-Za-z0-9_.-]+)(\s+)({_OTP_TOKEN})\b")
+# A login credential has no format, so no character class can recognise one. A real
+# Rakuten code was mixed alphanumeric, a Demo password may contain symbols and
+# spaces, and neither is constrained. These two patterns are therefore structural
+# rather than shape based: inside a "/mt4 <target> <credential>" command the
+# credential is simply whatever follows the target, so the entire remainder is
+# redacted. That deliberately over-redacts instead of risking a leak of a value
+# whose shape is unknown.
+#
+# The primary protection is not these patterns at all: the credential is never
+# placed into a message, and it is registered as a live secret so redact_text
+# matches it by value. See app.testing.security for the limit of value matching.
+_COMMAND_RE = re.compile(r"(?i)(/mt4\s+)([A-Za-z0-9_.-]+)(\s+)([^\n\r]*)")
 _SLACK_TEXT_RE = re.compile(
-    rf"(?i)([\"']?text[\"']?\s*[:=]\s*[\"']?)([A-Za-z0-9_.-]+)(\s+)({_OTP_TOKEN})(?=[\"']?[,}}\s])"
+    r"(?i)([\"']?text[\"']?\s*[:=]\s*[\"']?)([A-Za-z0-9_.-]+)(\s+)([^\n\r\"']*)"
 )
 _KEY_VALUE_RE = re.compile(
     r"(?i)([\"']?)\b(otp|one[-_ ]?time(?:\s+password)?|password|app[_ -]?token|bot[_ -]?token)\b"

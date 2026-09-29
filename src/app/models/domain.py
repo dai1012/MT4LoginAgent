@@ -24,17 +24,41 @@ _WIN32_FALLBACK_KEYS = (
     "login_button",
 )
 SLACK_USER_ID_PATTERN = re.compile(r"^[UW][A-Z0-9]{2,31}$", re.IGNORECASE)
-# Rakuten does not issue a fixed-length numeric code. A credential observed on a
-# real account mixed ASCII upper/lower case letters and digits and was 15
-# characters long, so the previous 4-10 digit rule rejected a valid value.
+# The broker issues a one-time code, while a Demo account is driven with a fixed
+# password. Neither has a documented format, and a password may legitimately
+# contain symbols, spaces or non-ASCII characters. So this value is treated as an
+# opaque secret rather than a formatted code: only its size is bounded and the
+# characters that would break a log line or a protocol frame are refused.
 #
-# This change only widens the rule. The floor stays at 4 so nothing that was
-# accepted before becomes rejected, and the ceiling moves to 32 because the
-# observed real value exceeds the old 10. A single sample is not evidence for a
-# hard 15-character length, so the range stays deliberately wider. Pure numeric
-# values still pass, which is what a fixed numeric Demo credential needs. Empty
-# values, whitespace, non-ASCII look-alikes and over-long values stay rejected.
-OTP_PATTERN = re.compile(r"^[A-Za-z0-9]{4,32}$")
+# The field is still called ``otp`` throughout the schema and the internals so that
+# stored configuration and existing callers keep working. User-facing wording says
+# "credential / password or OTP".
+CREDENTIAL_MAX_LENGTH = 128
+_CREDENTIAL_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def check_credential(value: str) -> str:
+    """Validate an opaque login credential without assuming any format.
+
+    Printable ASCII including symbols and spaces is allowed, as is Unicode. Only a
+    value that is empty, longer than the bound, or carrying a control character is
+    rejected; a control character would allow a newline to forge a log line or a
+    NUL to truncate a string in a downstream consumer.
+
+    128 is chosen because a Slack command is capped at 256 characters in total, so a
+    credential of this length still leaves room for the command prefix and a
+    64-character alias. It is far above any plausible broker credential and it
+    bounds how much a single mistyped value can inject into one log line.
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("credential must not be empty")
+    if len(value) > CREDENTIAL_MAX_LENGTH:
+        raise ValueError(f"credential must be at most {CREDENTIAL_MAX_LENGTH} characters")
+    if _CREDENTIAL_CONTROL_RE.search(value):
+        raise ValueError(
+            "credential must not contain NUL, CR, LF or other control characters"
+        )
+    return value
 _NESTED_QUANTIFIER_RE = re.compile(r"\([^)]*(?:[+*?{][^)]*)\)[+*?{]")
 _ALTERNATION_QUANTIFIER_RE = re.compile(r"\([^)]*\|[^)]*\)[+*?{]")
 _ADJACENT_UNBOUNDED_RE = re.compile(r"(?:\.\*|\.\+|\w\*|\w\+)\s*(?:\.\*|\.\+|\w\*|\w\+)")
@@ -400,13 +424,8 @@ class LoginRequest:
             self.received_monotonic = time.monotonic() - age
         if not isinstance(self.otp, SecretStr):
             self.otp = SecretStr(str(self.otp))
-        value = self.otp.get_secret_value()
-        if not value:
-            raise ValueError("OTP must not be empty")
-        if not OTP_PATTERN.fullmatch(value):
-            raise ValueError(
-                "OTP must be 4 to 32 ASCII alphanumeric characters without whitespace"
-            )
+        # The field keeps its historical name; the value is an opaque credential.
+        check_credential(self.otp.get_secret_value())
 
 
 class AutomationResult(APIModel):

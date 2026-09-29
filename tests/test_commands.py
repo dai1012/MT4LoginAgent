@@ -17,21 +17,44 @@ def test_parse_login_and_status():
     assert parse_slash_command("/mt4 status").kind == CommandKind.STATUS
 
 
+# A credential is opaque, so short values, symbols and internal spaces are all
+# valid now. Only emptiness, control characters, the length bound and a malformed
+# command are still rejected.
 @pytest.mark.parametrize(
     "text",
     [
-        "A abc",
-        "A 123",
-        "A " + "9" * 33,  # over the 32 character ceiling
         "",
-        "A 123456 extra",
-        "/mt4foo 123456",
+        "   ",
+        "A",
+        "/mt4",
+        "A ",
+        "A " + "9" * 129,  # over the 128 character bound
         "A 123456" + "x" * 300,
+        "A with\nnewline",
+        "A with\x00nul",
+        "/mt4foo 123456",
+        "/mt4 bad/alias value",
     ],
 )
 def test_invalid_command_shapes_are_rejected(text):
     with pytest.raises(CommandError):
         parse_slash_command(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "A a",
+        "A 123",
+        "A 123456 extra",
+        "A p@ss w0rd!",
+        "A 密码 測試",
+    ],
+)
+def test_opaque_credential_command_shapes_are_accepted(text):
+    parsed = parse_slash_command(text)
+    assert parsed.kind == CommandKind.LOGIN
+    assert parsed.target == "A"
 
 
 @pytest.mark.asyncio

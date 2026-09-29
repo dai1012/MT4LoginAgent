@@ -93,7 +93,7 @@ Web Admin local admin token (keep private): <一串字符>
 | 字段 | 是否必填 | 怎么填 |
 |---|---|---|
 | Name | 必填 | 人类可读名，如 `Rakuten-A` |
-| **Alias** | 必填 | Slack 里用的短名，如 `A`。**不能是 4~10 位纯数字**（会和 OTP 混淆） |
+| **Alias** | 必填 | Slack 里用的短名，如 `A`。**不能是 4~10 位纯数字**（会与纯数字凭据混淆） |
 | Login ID | 必填 | MT4 登录 ID |
 | Server | 必填 | 如 `RakutenMT4` |
 | **MT4 executable path** | 必填 | `C:\Program Files\Rakuten\terminal.exe` 这样的绝对路径 |
@@ -353,7 +353,7 @@ Windows 上是**硬性要求**，至少需要这四个键：
 - [ ] Step 2 检测到候选控件，且 `Apply detected selectors` 后 Account `Test` 显示 `valid`
 - [ ] Step 3 PASS，Slack `Connection Test` 显示 `Connected`
 - [ ] Step 4 单账号 A 真实登录成功，History 有记录
-- [ ] （推荐）Full Slack E2E 手动发 `/mt4 A <OTP>` 后 `Await` 拿到结果
+- [ ] （推荐）Full Slack E2E 手动发 `/mt4 A <凭据>` 后 `Await` 拿到结果
 - [ ] （可选）Step 5 Group 按顺序执行，部分失败不中断
 - [ ] 报告中**没有** OTP / token 泄漏
 - [ ] History 里能查到本次记录

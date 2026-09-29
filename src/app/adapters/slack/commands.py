@@ -4,9 +4,8 @@ import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from app.models.domain import OTP_PATTERN, LoginRequest
+from app.models.domain import LoginRequest, check_credential
 
-OTP_RE = OTP_PATTERN
 TARGET_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 MAX_COMMAND_TEXT_LENGTH = 256
 
@@ -37,22 +36,34 @@ def parse_slash_command(text: str) -> ParsedCommand:
             raise CommandError("未知 Slack 命令")
         value = remainder.strip()
     if not value:
-        raise CommandError("用法：/mt4 <alias-or-group> <OTP> 或 /mt4 status")
-    parts = value.split()
-    if len(parts) == 1 and parts[0].casefold() == "status":
-        return ParsedCommand(CommandKind.STATUS)
-    if len(parts) != 2:
-        raise CommandError("用法：/mt4 <alias-or-group> <OTP> 或 /mt4 status")
-    target, otp = parts
+        raise CommandError("用法：/mt4 <alias-or-group> <credential> 或 /mt4 status")
+    # The target is the first token; the credential is everything after it. A fixed
+    # Demo password may legitimately contain spaces, so the remainder is not split
+    # again on whitespace. The command text was already stripped above, so only the
+    # separator between target and credential is consumed.
+    parts = value.split(None, 1)
+    if len(parts) == 1:
+        if parts[0].casefold() == "status":
+            return ParsedCommand(CommandKind.STATUS)
+        raise CommandError("用法：/mt4 <alias-or-group> <credential> 或 /mt4 status")
+    target, credential = parts
     if not TARGET_RE.fullmatch(target):
         raise CommandError("alias 或 group 名称格式无效")
-    if not OTP_RE.fullmatch(otp):
-        raise CommandError("OTP 必须是 4 到 32 位 ASCII 字母或数字，且不含空格")
-    return ParsedCommand(CommandKind.LOGIN, target=target, otp=otp)
+    try:
+        check_credential(credential)
+    except ValueError:
+        # The rejected value is deliberately not echoed: it is a secret.
+        raise CommandError("credential 无效：不能为空、不能含控制字符，且长度有上限") from None
+    return ParsedCommand(CommandKind.LOGIN, target=target, otp=credential)
 
 
-def is_otp(value: str) -> bool:
-    return bool(OTP_RE.fullmatch(value))
+def is_credential(value: str) -> bool:
+    """True when the value is usable as an opaque login credential."""
+    try:
+        check_credential(value)
+    except ValueError:
+        return False
+    return True
 
 
 def to_login_request(sender_id: str, command: ParsedCommand) -> LoginRequest:

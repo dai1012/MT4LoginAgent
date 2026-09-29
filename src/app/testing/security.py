@@ -29,12 +29,33 @@ def secret_candidates(secrets: SecretsConfig, *, otp: str | None = None) -> tupl
     return tuple(sorted(set(values), key=len, reverse=True))
 
 
+# A credential may legitimately be only one or two characters long, but a substring
+# scan cannot treat a value that short as a secret: it occurs by chance in almost any
+# text, and redacting it would destroy the output. Value matching is therefore
+# limited to candidates of at least four characters. Short credentials are covered
+# by the structural guarantees instead: the value is never interpolated into a
+# message, error, evidence field or log line, and the command patterns in
+# app.security.redaction redact the whole remainder of a /mt4 command regardless of
+# its shape. Shortening this bound is not a safe option.
+_MIN_SUBSTRING_SECRET_LENGTH = 4
+
+
 def contains_secret(text: str, candidates: Iterable[str]) -> bool:
-    return any(len(candidate) >= 4 and candidate in text for candidate in candidates)
+    return any(
+        len(candidate) >= _MIN_SUBSTRING_SECRET_LENGTH and candidate in text
+        for candidate in candidates
+    )
 
 
 def sanitize_text(text: str, candidates: Iterable[str]) -> str:
-    return redact_text(text, tuple(candidate for candidate in candidates if len(candidate) >= 4))
+    return redact_text(
+        text,
+        tuple(
+            candidate
+            for candidate in candidates
+            if len(candidate) >= _MIN_SUBSTRING_SECRET_LENGTH
+        ),
+    )
 
 
 def _result(
