@@ -217,7 +217,8 @@ async def test_discovery_on_non_windows_never_claims_real_success(runtime, monke
 
 
 @pytest.mark.asyncio
-async def test_group_runner_reports_each_member_result(runtime, monkeypatch):
+async def test_group_runner_reports_each_member_result(mock_runtime, monkeypatch):
+    runtime = mock_runtime  # the scripted automation, on any OS
     # The scripted outcome and the off-Windows behaviour are what this covers,
     # so the platform is pinned instead of inherited from the runner.
     monkeypatch.setattr(sys, "platform", "linux")

@@ -181,7 +181,8 @@ async def test_duplicate_slack_delivery_is_ignored(runtime, account_payload):
 
 
 @pytest.mark.asyncio
-async def test_processor_acknowledges_and_sends_safe_completion(runtime, account_payload):
+async def test_processor_acknowledges_and_sends_safe_completion(mock_runtime, account_payload):
+    runtime = mock_runtime  # the scripted automation, on any OS
     runtime.accounts.create(AccountCreate.model_validate(account_payload))
     runtime.settings_repository.update(allowed_slack_user_ids=["U1111111111"])
     posted = []
