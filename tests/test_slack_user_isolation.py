@@ -8,7 +8,6 @@ the requirement that "not allowed" and "does not exist" are indistinguishable.
 
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -18,7 +17,7 @@ from app.adapters.slack.gateway import SlackGateway
 from app.adapters.slack.processor import SlackCommandProcessor
 from app.main import create_application
 from app.models.domain import AccountCreate, GroupCreate
-from tests.support import account_values, instance_paths
+from tests.support import account_values, instance_paths, wait_for
 
 USER_A = "U1111111111"
 USER_B = "U2222222222"
@@ -184,10 +183,7 @@ async def test_completion_goes_privately_and_never_broadcasts(runtime):
     two_accounts(runtime)
     processor, posted = make_processor(runtime, bindings={USER_A: ["A"]})
     _ok, broadcasts = await run_command(processor, "A 123456", user=USER_A)
-    for _ in range(20):
-        if posted:
-            break
-        await asyncio.sleep(0.01)
+    await wait_for(lambda: bool(posted))
     assert posted, "the completion must be delivered privately"
     assert posted[0]["user"] == USER_A
     assert posted[0]["channel"] == "C0123"

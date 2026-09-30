@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
 from app.adapters.slack.commands import CommandError, CommandKind, parse_slash_command
 from app.adapters.slack.processor import SlackCommandProcessor
 from app.models.domain import AccountCreate
+from tests.support import wait_for
 
 
 def test_parse_login_and_status():
@@ -173,10 +172,10 @@ async def test_duplicate_slack_delivery_is_ignored(runtime, account_payload):
     await processor.handle(ack=ack, say=say, body=body)
     assert "处理中" in responses[0]["text"]
     assert "重复" in responses[1]["text"]
-    for _ in range(20):
-        if says:
-            break
-        await asyncio.sleep(0.01)
+    # The completion is scheduled, not awaited: wait for the history row it writes
+    # rather than for the acknowledgement, and give it a budget that holds on a
+    # Windows runner too.
+    await wait_for(lambda: len(runtime.history.recent()) == 1)
     assert len(runtime.history.recent()) == 1
     await runtime.login_service.shutdown()
 
@@ -217,10 +216,7 @@ async def test_processor_acknowledges_and_sends_safe_completion(runtime, account
         },
     )
     assert "处理中" in responses[0]["text"]
-    for _ in range(20):
-        if posted:
-            break
-        await asyncio.sleep(0.01)
+    await wait_for(lambda: bool(posted))
     # The result goes to the requester privately, never through say(), which would
     # post it into the originating channel for everyone there to read.
     assert posted and "登录成功" in posted[0]["text"]

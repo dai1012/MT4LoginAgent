@@ -6,7 +6,9 @@ run without a Windows filesystem, while macOS/Linux still use the same payload.
 
 from __future__ import annotations
 
+import asyncio
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -57,4 +59,23 @@ def account_values(**overrides: Any) -> dict[str, Any]:
     return values
 
 
-__all__ = ["ACCOUNT_DEFAULTS", "account_values", "instance_paths"]
+__all__ = ["ACCOUNT_DEFAULTS", "account_values", "instance_paths", "wait_for"]
+
+
+async def wait_for(predicate, timeout: float = 10.0, interval: float = 0.01) -> bool:
+    """Wait until a background task has actually produced its effect.
+
+    The completion callback and the reconnect supervisor are scheduled rather than
+    awaited, so a test has to wait for the observable result. Polling for a fixed short
+    sleep is a race: on a fast Linux runner the work lands inside 10 ms, and on a Windows
+    runner it frequently does not, which made the same suite fail on one platform only.
+    Waiting on the real condition with a generous budget removes the race on both.
+
+    Returns whether the condition became true, so the caller keeps its own assertion.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        await asyncio.sleep(interval)
+    return predicate()

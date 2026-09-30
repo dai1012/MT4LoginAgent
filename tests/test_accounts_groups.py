@@ -4,6 +4,7 @@ import pytest
 
 from app.models.domain import AccountCreate, AccountPatch, GroupCreate, GroupPatch
 from app.models.errors import ConflictError, DomainValidationError, NotFoundError
+from tests.support import instance_paths
 
 
 def test_account_crud_and_alias_resolution(runtime, account_payload):
@@ -70,10 +71,9 @@ def test_group_crud_order_and_delete_purges_account(runtime, account_payload):
                 **account_payload,
                 "alias": "B",
                 "login_id": "B",
-                "terminal_path": account_payload["terminal_path"].replace(
-                    "terminal.exe", "terminal-b.exe"
-                ),
-                "profile_path": f'{account_payload["profile_path"]}/B',
+                # A real, separate installation: Windows validates that the terminal
+                # file and the working directory exist, so a renamed path is refused.
+                **instance_paths("B"),
             }
         )
     )

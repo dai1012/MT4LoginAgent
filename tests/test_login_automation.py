@@ -59,7 +59,13 @@ async def test_mock_success_failure_timeout():
 
 
 @pytest.mark.asyncio
-async def test_group_partial_failure_and_history_never_contains_otp(runtime, tmp_path):
+async def test_group_partial_failure_and_history_never_contains_otp(
+    runtime, tmp_path, monkeypatch
+):
+    # The scripted outcome and the off-Windows behaviour are what this covers,
+    # so the platform is pinned instead of inherited from the runner.
+    monkeypatch.setattr(sys, "platform", "linux")
+
     runtime.accounts.create(
         account_create(
             {

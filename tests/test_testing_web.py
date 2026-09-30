@@ -92,7 +92,13 @@ def test_windows_test_api_exposes_safe_phase_and_manual_guards(
     assert missing.status_code == 404
 
 
-def test_windows_test_report_endpoints_are_protected_and_bounded(client, account_payload):
+def test_windows_test_report_endpoints_are_protected_and_bounded(
+    client, account_payload, monkeypatch
+):
+    # The scripted outcome and the off-Windows behaviour are what this covers,
+    # so the platform is pinned instead of inherited from the runner.
+    monkeypatch.setattr(sys, "platform", "linux")
+
     assert client.get("/api/test/windows/report/report.html").status_code == 404
     assert client.get("/api/test/windows/report").status_code == 200
     account = client.post("/api/accounts", json=account_payload).json()

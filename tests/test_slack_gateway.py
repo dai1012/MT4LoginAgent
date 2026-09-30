@@ -7,6 +7,7 @@ import pytest
 from pydantic import SecretStr
 
 from app.models.domain import SecretsConfig
+from tests.support import wait_for
 
 
 @pytest.mark.asyncio
@@ -70,7 +71,8 @@ async def test_supervisor_rebuilds_a_stale_disconnected_handler(runtime, monkeyp
     monkeypatch.setattr(gateway, "start", start)
     monkeypatch.setattr(gateway, "_retry_delay", 0.001)
     task = asyncio.create_task(gateway._reconnect_supervisor())
-    await asyncio.sleep(0.01)
+    # Wait for the supervisor to act rather than assuming it fits in a fixed sleep.
+    await wait_for(lambda: bool(started))
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task

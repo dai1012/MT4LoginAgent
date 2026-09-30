@@ -133,6 +133,11 @@ async def test_login_window_diagnostic_warns_when_window_misses_configured_regex
 async def test_login_window_diagnostic_keeps_english_fallback_without_configured_regex(
     runtime, monkeypatch
 ):
+    # An Account with no title expression is a legitimate configuration off Windows and
+    # a rejected one on Windows, so the platform is pinned while the Account is created
+    # and then switched for the diagnostic. Creating it under win32 would be refused by
+    # validation before the fallback under test was ever reached.
+    monkeypatch.setattr(sys, "platform", "linux")
     account = runtime.accounts.create(
         account_create(
             {
@@ -213,6 +218,10 @@ async def test_discovery_on_non_windows_never_claims_real_success(runtime, monke
 
 @pytest.mark.asyncio
 async def test_group_runner_reports_each_member_result(runtime, monkeypatch):
+    # The scripted outcome and the off-Windows behaviour are what this covers,
+    # so the platform is pinned instead of inherited from the runner.
+    monkeypatch.setattr(sys, "platform", "linux")
+
     for alias, outcome in (("A", "failure"), ("B", "success")):
         runtime.accounts.create(
             account_create(
