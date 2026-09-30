@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import stat
 from dataclasses import asdict
+from pathlib import Path
 
 import pytest
 from pydantic import SecretStr
@@ -13,6 +16,33 @@ from app.models.domain import AppSettings, LoginRequest
 from app.security.logging_config import configure_logging
 from app.security.redaction import RedactingFilter, redact_text, sensitive_values
 
+POSIX = os.name == "posix"
+
+
+def _writable(path: Path) -> bool:
+    """The property the Agent actually depends on for its own files.
+
+    On Windows ``chmod`` only toggles the read-only attribute, so the mode bits read
+    0666 for any writable file no matter what mode was requested. Asserting 0600 there
+    would be asserting something untrue, and pretending otherwise would hide the real
+    gap. What is assertable is the actual requirement: the hardening must not lock the
+    Agent out of its own secrets and log files. The equivalent Windows guarantee is the
+    inherited ACL, which Python does not expose and this project does not tighten, so it
+    is documented rather than claimed.
+    """
+    return bool(path.stat().st_mode & stat.S_IWRITE)
+
+
+def test_secret_file_permission_assertion_matches_platform_semantics(tmp_path):
+    """The 0600 guarantee is a POSIX guarantee; Windows only exposes writability."""
+    target = tmp_path / "probe.json"
+    target.write_text("{}", encoding="utf-8")
+    target.chmod(0o600)
+    if POSIX:
+        assert oct(target.stat().st_mode & 0o777) == "0o600"
+    else:
+        # Asking for 0600 must not have made the file read-only on Windows.
+        assert _writable(target)
 
 def test_redacts_otp_command_and_slack_tokens():
     assert "123456" not in redact_text("command=/mt4 A 123456", ("123456",))
@@ -92,7 +122,10 @@ def test_settings_and_secrets_are_separate_and_not_returned(tmp_path):
         if paths.settings_file.exists()
         else True
     )
-    assert oct(paths.secrets_file.stat().st_mode & 0o777) == "0o600"
+    if POSIX:
+        assert oct(paths.secrets_file.stat().st_mode & 0o777) == "0o600"
+    else:
+        assert _writable(paths.secrets_file)
 
 
 def test_runtime_log_files_are_private(tmp_path):
@@ -101,8 +134,13 @@ def test_runtime_log_files_are_private(tmp_path):
     logging.getLogger("test.private-log").error("no secrets here")
     log_file = log_dir / "agent.log"
     assert log_file.exists()
-    assert oct(log_file.stat().st_mode & 0o777) == "0o600"
-    assert oct(log_dir.stat().st_mode & 0o777) == "0o700"
+    if POSIX:
+        assert oct(log_file.stat().st_mode & 0o777) == "0o600"
+        assert oct(log_dir.stat().st_mode & 0o777) == "0o700"
+    else:
+        # The write bit is the only permission Windows expresses through stat().
+        assert _writable(log_file), "the Agent must still be able to write its own log"
+        assert _writable(log_dir)
 
 
 def test_atomic_settings_round_trip(tmp_path):

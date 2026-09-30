@@ -150,7 +150,12 @@ async def test_login_window_diagnostic_keeps_english_fallback_without_configured
 
 
 @pytest.mark.asyncio
-async def test_environment_phase_is_safe_and_marks_non_windows_as_not_run(runtime):
+async def test_environment_phase_is_safe_and_marks_non_windows_as_not_run(
+    runtime, monkeypatch
+):
+    # Pin the platform instead of inheriting the runner's, so this covers the
+    # off-Windows branch on a Windows runner and vice versa.
+    monkeypatch.setattr(sys, "platform", "linux")
     runner = TestRunner(runtime)
     results = await runner.run_phase(TestPhase.ENVIRONMENT)
     assert any(item.status == TestStatus.NOT_RUN for item in results)
@@ -189,7 +194,8 @@ async def test_real_login_is_blocked_until_environment_and_discovery(runtime, mo
 
 
 @pytest.mark.asyncio
-async def test_discovery_on_non_windows_never_claims_real_success(runtime):
+async def test_discovery_on_non_windows_never_claims_real_success(runtime, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")
     account = runtime.accounts.create(
         account_create(
             {

@@ -16,10 +16,15 @@ jobs:
         python-version: ["3.11", "3.12"]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      # Pinned to the current official majors: v7 of each action runs on the Node 24
+      # runtime, so the Node 20 deprecation warning is resolved rather than tolerated.
+      # None of the removed inputs is used here: setup-python v7 dropped `pip-install`,
+      # setup-node v6 dropped `always-auth`, and this workflow installs with an explicit
+      # `pip install` step.
+      - uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -33,7 +38,7 @@ jobs:
         run: ruff check .
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: lts/*
 

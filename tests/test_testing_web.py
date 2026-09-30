@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 
 def test_step_cards_do_not_warn_on_manual_and_report_a_manual_count(client):
     """A manual or optional check must be counted, not painted as a degradation."""
@@ -51,7 +53,12 @@ def test_windows_test_page_keeps_step_wizard_and_manual_guards(client):
     assert "WINDOWS_REAL_TEST_REQUIRED" in text
 
 
-def test_windows_test_api_exposes_safe_phase_and_manual_guards(client, account_payload):
+def test_windows_test_api_exposes_safe_phase_and_manual_guards(
+    client, account_payload, monkeypatch
+):
+    # The availability flag is a platform fact, so pin the platform rather than
+    # asserting whatever the runner happens to be.
+    monkeypatch.setattr(sys, "platform", "linux")
     status = client.get("/api/test/windows")
     assert status.status_code == 200
     assert status.json()["windows_available"] is False

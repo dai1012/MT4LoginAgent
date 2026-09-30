@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from datetime import timedelta
 
 import pytest
@@ -722,9 +723,45 @@ async def test_group_member_removal_does_not_skip_later_members(runtime):
     await runtime.login_service.shutdown()
 
 
-def test_non_windows_factory_uses_mock_or_rejects_explicit_windows():
+def test_non_windows_factory_uses_mock_or_rejects_explicit_windows(monkeypatch):
+    """Both platform branches are pinned, so this holds on a Windows runner too.
+
+    ``build_automation`` reads ``sys.platform`` when it is called, so the platform is
+    simulated instead of inherited. Otherwise the assertion would only mean anything on
+    a non-Windows runner, and the Windows runner would fail it for the wrong reason.
+    """
     from app.models.domain import AppSettings, AutomationMode
 
+    monkeypatch.setattr(sys, "platform", "linux")
     assert build_automation(AppSettings(automation_mode=AutomationMode.MOCK)).mode == "mock"
     with pytest.raises(ConfigurationError):
         build_automation(AppSettings(automation_mode=AutomationMode.WINDOWS))
+
+
+def test_windows_factory_does_not_reject_the_explicit_windows_mode(monkeypatch):
+    """The companion of the test above: on Windows the explicit mode is legitimate.
+
+    The contract under test is the platform gate itself: off Windows the explicit mode
+    is refused with ConfigurationError, on Windows it is not refused. Constructing the
+    real automation needs the Windows-only dependencies, so on a non-Windows host the
+    call may still fail further in; any failure other than ConfigurationError proves
+    the gate let it through, which is the property that matters.
+    """
+    from app.models.domain import AppSettings, AutomationMode
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    try:
+        build_automation(AppSettings(automation_mode=AutomationMode.WINDOWS))
+    except ConfigurationError:
+        pytest.fail("on Windows the explicit Windows mode must not be refused")
+    except Exception:
+        # Expected off Windows: the Windows-only dependencies are unavailable here.
+        pass
+
+
+def test_auto_mode_falls_back_to_mock_off_windows(monkeypatch):
+    """AUTO must not silently attempt Windows automation on a non-Windows host."""
+    from app.models.domain import AppSettings, AutomationMode
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert build_automation(AppSettings(automation_mode=AutomationMode.AUTO)).mode == "mock"

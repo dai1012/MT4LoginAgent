@@ -7,6 +7,8 @@ ambiguous, and must not write anything itself.
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from app.mt4.windows_automation import WindowsAutomation
@@ -463,6 +465,9 @@ async def test_apply_rejects_an_out_of_range_control_id(runtime):
 @pytest.mark.asyncio
 async def test_inspect_is_unavailable_off_windows(runtime, monkeypatch):
     from app.models.domain import AccountCreate
+
+    # Off-Windows is a simulated condition here, not a property of the runner.
+    monkeypatch.setattr(sys, "platform", "linux")
 
     account = runtime.accounts.create(
         AccountCreate.model_validate(
