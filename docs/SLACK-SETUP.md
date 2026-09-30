@@ -69,6 +69,10 @@ existing Account, so onboarding a colleague cannot silently hand them your tradi
 accounts. A person with an empty binding list sees `No accounts assigned.` from
 `/mt4 status`.
 
+> Sanitised screenshot will be added in a later commit.
+
+![Web Admin Slack settings showing the Allowed Slack User ID field and the per-user Account bindings checkboxes](docs/images/slack_settings.webp)
+
 In Web Admin → **Slack**, each allowed Member ID gets a row of Account alias
 checkboxes drawn from the accounts you have already created:
 

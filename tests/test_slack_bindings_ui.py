@@ -117,7 +117,7 @@ def test_docs_carry_the_two_user_worked_example(client):
             for phrase in (
                 "保持独立",
                 "stay separated",
-                "the other person's MT4 Accounts",
+                "看不到对方的 MT4 Account",
                 "another person's MT4 Accounts",
             )
         ), "the isolation guarantee is not documented"

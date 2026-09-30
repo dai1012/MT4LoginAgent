@@ -133,6 +133,7 @@ def test_docs_state_alias_target_credential_rule_and_duplicate(client):
             for phrase in (
                 "绝不能包含 Login ID",
                 "不能包含 Login ID",
+                "不要包含 Login ID",
                 "Do not include the login id",
             )
         ), "the credential must not carry the login id"
@@ -142,7 +143,7 @@ def test_docs_state_alias_target_credential_rule_and_duplicate(client):
             for phrase in (
                 "独立的 terminal 安装目录",
                 "独立的 working directory",
-                "own install folder",
-                "own working directory",
+                "每个并发终端有自己的",
+                "each concurrently running terminal has its own",
             )
         ), "the separate install folder and working directory rule is documented"

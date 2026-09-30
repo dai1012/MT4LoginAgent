@@ -75,6 +75,10 @@ after an update, that is a known and expected failure, not a bug in the Agent.**
    - `terminal_path` — the full path to `terminal.exe`
    - `profile_path` — the process working directory, **not** the data folder
    Leave every selector empty and leave the Win32 fallback off.
+> Sanitised screenshot will be added in a later commit.
+
+![Account configuration form showing alias, login id, server, terminal path and process working directory, with the selector fields left empty](docs/images/account_config_basic.webp)
+
 3. **Start that terminal** and leave it on its main window. You do **not** need to
    open the login dialog by hand.
 4. **Windows Test → select the Account → `Detect Win32`.**
@@ -87,6 +91,10 @@ after an update, that is a known and expected failure, not a bug in the Agent.**
    - `NEEDS_CONFIRMATION` — it could not be pinned down, and **no value is offered**
    Nothing is guessed. While any required field is not `HIGH`, the Apply button is
    not offered, and the panel lists which fields are missing.
+> Sanitised screenshot will be added in a later commit.
+
+![Win32 Inspector panel listing the suggested dialog class, anchors and control ids with a HIGH or NEEDS_CONFIRMATION confidence per field, plus the Apply button](docs/images/account_config_win32.webp)
+
 6. **Apply** once the list is empty. This writes **only** the Win32 fallback fields.
    Your alias, login id, server, terminal path and working directory are left
    exactly as they were.
