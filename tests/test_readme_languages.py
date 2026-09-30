@@ -118,20 +118,46 @@ def test_the_three_topic_screenshots_live_in_their_topic_documents() -> None:
     for doc, images in DIVERTED_IMAGES.items():
         text = read(doc)
         for image in images:
-            assert image in text, f"{image} must be referenced from {doc}"
+            # A document inside docs/ must spell the path relative to itself, or the
+            # link resolves to docs/docs/images/... and breaks on the rendered page.
+            relative = image.removeprefix("docs/")
+            assert f"]({relative})" in text, f"{image} must be referenced from {doc}"
 
 
 def test_no_document_references_an_undeclared_screenshot() -> None:
     """Only the seven agreed images may ever be linked."""
-    allowed = {item for item in README_IMAGES}
+    allowed = set(README_IMAGES)
     for images in DIVERTED_IMAGES.values():
         allowed.update(images)
     docs = [REPO_ROOT / "README.md", REPO_ROOT / "README.ja.md", REPO_ROOT / "README.en.md"]
     docs += [REPO_ROOT / item for item in DIVERTED_IMAGES]
-    pattern = r"docs/images/([A-Za-z0-9_]+\.webp)"
+    # A README at the repository root spells docs/images/..., a document inside docs/
+    # spells images/...; both are the same file and both must be caught here.
+    pattern = r"(?:docs/)?images/([A-Za-z0-9_]+\.webp)"
     for path in docs:
         for image in re.findall(pattern, path.read_text(encoding="utf-8")):
             assert f"docs/images/{image}" in allowed, f"{path.name} references {image}"
+
+
+def test_every_relative_link_in_the_docs_resolves() -> None:
+    """Catch a link spelled relative to the repository root inside docs/.
+
+    Such a link is not missing on disk, so a check that only compares the target
+    string against a pending list would miss it entirely.
+    """
+    docs = [
+        REPO_ROOT / item
+        for item in ("README.md", "README.ja.md", "README.en.md", "SECURITY.md")
+    ]
+    docs += sorted((REPO_ROOT / "docs").glob("*.md"))
+    link = re.compile(r"\[([^\]]*)\]\(([^)]+)\)")
+    for path in docs:
+        for _label, target in link.findall(path.read_text(encoding="utf-8")):
+            target = target.split("#")[0].strip()
+            if not target or target.startswith(("http://", "https://", "mailto:")):
+                continue
+            resolved = (path.parent / target).resolve()
+            assert resolved.exists(), f"{path.name} -> {target} does not resolve"
 
 
 @pytest.mark.parametrize("name", ["README.md", "README.ja.md", "README.en.md"])
@@ -149,3 +175,22 @@ def test_each_edition_reaches_the_document_index(name: str) -> None:
 
 def test_images_directory_is_present() -> None:
     assert IMAGES_DIR.is_dir(), "docs/images must exist for the screenshots"
+
+
+@pytest.mark.parametrize("image", sorted(README_IMAGES + sum(DIVERTED_IMAGES.values(), ())))
+def test_every_referenced_screenshot_exists_and_is_not_empty(image: str) -> None:
+    path = REPO_ROOT / image
+    assert path.is_file(), f"{image} is referenced but missing"
+    assert path.stat().st_size > 0, f"{image} is empty"
+    # A real RIFF/WEBP container, so a renamed placeholder cannot pass.
+    header = path.read_bytes()[:12]
+    assert header[:4] == b"RIFF" and header[8:12] == b"WEBP", f"{image} is not a WebP"
+
+
+def test_images_directory_holds_only_the_seven_agreed_files() -> None:
+    """No undeclared image may sit in the directory next to the referenced ones."""
+    expected = {Path(item).name for item in README_IMAGES}
+    for images in DIVERTED_IMAGES.values():
+        expected.update(Path(item).name for item in images)
+    present = {item.name for item in IMAGES_DIR.iterdir() if item.is_file()}
+    assert present == expected, f"unexpected: {sorted(present - expected)}"
