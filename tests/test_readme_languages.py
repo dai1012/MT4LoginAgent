@@ -16,6 +16,19 @@ from pathlib import Path
 
 import pytest
 
+CODE_SPAN = re.compile(r"`[^`]*`|```.*?```", re.S)
+
+
+def prose_only(text: str) -> str:
+    """Drop inline code and fenced blocks before judging a document's language.
+
+    A verbatim sample of a broker's window title can contain Japanese whatever the
+    prose language is; that is a code sample, not a translation error.
+    """
+    return CODE_SPAN.sub(" ", text)
+
+
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 IMAGES_DIR = REPO_ROOT / "docs" / "images"
 
@@ -56,8 +69,10 @@ def test_readme_is_simplified_chinese_by_default() -> None:
     # Simplified-specific forms, not just any Han character.
     assert "简体中文" in text
     assert "远端" in text or "登录" in text
-    # The default edition must not be an English or Japanese document.
-    assert not KANA.search(text), "README.md must not contain Japanese kana"
+    # The default edition must not be an English or Japanese document. Verbatim code
+    # samples are excluded: the published success regex carries a Japanese broker
+    # title on purpose, and that is a code sample rather than a translation error.
+    assert not KANA.search(prose_only(text)), "README.md prose must not contain kana"
 
 
 def test_english_edition_contains_no_japanese_or_chinese() -> None:
@@ -65,8 +80,9 @@ def test_english_edition_contains_no_japanese_or_chinese() -> None:
     # The language navigation necessarily names the other two editions in their own
     # scripts, so the header is excluded before the body is checked.
     body = "\n".join(raw.splitlines()[8:])
-    assert not KANA.search(body), "README.en.md body must not contain kana"
-    assert not HAN.search(body), "README.en.md body must not contain Han characters"
+    prose = prose_only(body)
+    assert not KANA.search(prose), "README.en.md prose must not contain kana"
+    assert not HAN.search(prose), "README.en.md prose must not contain Han characters"
     assert "Slack" in raw
 
 

@@ -23,11 +23,11 @@ Agent 跑在你自己的机器上，不需要公网服务器、不需要开放�
 > 出现。所有券商专用配置（对话框控件 id、菜单文案、窗口标题）都是**按券商而定**的，
 > 详见[新券商适配](#9-新券商适配)。
 >
-> **诚实的验证状态**：核心 MT4 自动化（Win32 登录对话框全链路、多实例隔离、登录成功
-> 判定、自动打开登录框）**已在真实 Windows + 真实券商终端上验证过**。但**尚未**在真机
-> 验证的有：完整 Slack 端到端往返、Group 登录、以及较新的 Win32 Inspector。任何需要
-> 真机而未验证的项，一律返回 `WINDOWS_REAL_TEST_REQUIRED`，**不会伪造通过**。
-> 逐项边界见[已知限制](#11-已知限制)。
+> **诚实的验证状态**：核心 MT4 自动化与 Slack 单账号链路**已在真实 Windows + 真实券商终端上
+> 验证过**（含 Slack → Agent → MT4 Demo 真实登录 → 私密结果）。**尚未**在真机验证的只有：
+> **Group 登录**、**Production Rakuten 实盘账号与真实新 OTP**、以及**其它券商/其它 build**。
+> 任何需要真机而未验证的项，一律返回 `WINDOWS_REAL_TEST_REQUIRED`，**不会伪造通过**。
+> 逐项状态见[验证矩阵](#验证矩阵-verification-matrix)。
 
 ## 目录
 
@@ -39,6 +39,7 @@ Agent 跑在你自己的机器上，不需要公网服务器、不需要开放�
 - [Win32 Inspector](#7-win32-inspector)
 - [新券商适配](#9-新券商适配)
 - [安全模型](#10-安全模型)
+- [验证矩阵](#验证矩阵-verification-matrix)
 - [已知限制](#11-已知限制)
 - [文档索引](#12-文档索引)
 - [截图](#13-截图)
@@ -46,6 +47,38 @@ Agent 跑在你自己的机器上，不需要公网服务器、不需要开放�
 - [数据与文件](#15-数据与文件)
 - [停止、更新、卸载](#16-停止更新卸载)
 - [许可证](#17-许可证)
+
+## 验证矩阵 (verification matrix)
+
+把真机证据和自动化测试分开写清楚，避免把“测试套件全绿”当成真机证据。
+
+- ✅ **Verified on Windows** —— 真实 Windows 机器上人工验收过
+- 🧪 **Covered by automated tests** —— 有自动化覆盖，无真机证据
+- ⚠️ **Optional / not yet real-world validated** —— 功能存在，真机未验收
+
+| 能力 | 状态 | 说明 |
+|---|---|---|
+| Windows 安装 / Web Admin | ✅ 已验证 | `install.bat`、`start.bat`、`test-windows.bat` |
+| 单账号 Rakuten **Demo** 真实登录 | ✅ 已验证 | Demo 凭据真实登录 |
+| 多实例 A/B 隔离 | ✅ 已验证 | 独立安装目录 + cwd |
+| auto-open 登录框 | ✅ 已验证 | `WM_COMMAND` 菜单命令，无坐标无盲打 |
+| Win32 fallback 控件输入 | ✅ 已验证 | 填 Login ID / 凭据 / 选 server / 点 Login |
+| Win32 **原生**成功判定 | ✅ 已验证 | 标题走原生枚举、strict PID scope，不依赖 UIA |
+| 64-bit Python 控 32-bit MT4 | ✅ 已验证 | 位数 warning 非阻断 |
+| History | ✅ 已验证 | 不存凭据 |
+| Slack Socket Mode / allowlist | ✅ 已验证 | 真实 Slack 往返 |
+| Slack `/mt4 status` | ✅ 已验证 | 仅列调用者绑定的 alias |
+| **Slack 单账号 E2E** | ✅ 已验证 | `/mt4 A <凭据>` → Agent → MT4 真实登录 → 私密结果 |
+| 每用户 Account 绑定 + 跨账号拒绝 | ✅ 已验证 | 两个 Slack 用户互不可越 |
+| 私密投递（DM / ephemeral） | ✅ 已验证 | 频道内 ephemeral |
+| Account Duplicate | ✅ 已验证 | 实际用 A 复制出 B |
+| Detect Win32（Rakuten） | ✅ 已验证 | 探测可正常结束；仅全 HIGH 才提供 Apply |
+| **Group 登录** | ⚠️ 可选 / 真机未验收 | 代码与测试完整，真机 E2E 未跑 |
+| **Production Rakuten 实盘 / 真实新 OTP** | ⚠️ 真机未验收 | 上面真实登录均为 **Demo** |
+| 其它券商 / 其它 build | ⚠️ 可通过 Inspector 适配 | **未声称已验证** |
+
+> “Full Slack E2E” 这个旧词曾指“连 Group、实盘 OTP 一起跑”。现在拆开说：
+> **单账号 Slack → Agent → MT4 Demo 真实登录 → 私密结果** 已 ✅；**Group** 与**实盘新 OTP** 仍 ⚠️。
 
 ## 1. 项目定位
 
@@ -186,6 +219,9 @@ Step 卡片含义：
 ## 7. Win32 Inspector
 
 **适用**：新券商，或同一券商的新 MT4 build。
+**仅用于新券商 / 新 MT4 版本适配**；已配置且 `MT4_DISCOVERY_READY=PASS` 的 Account 不需要运行它。
+误点是安全的：只读、有界的探测，不改 Account、不改 discovery route、不碰凭据，可能打开登录框；
+只有显式点 **Apply detected Win32 settings** 才会写入。
 **不适用**：同券商同 build 的第二个账号 —— 那种情况直接用 **Account 复制**更快。
 
 ```
@@ -215,6 +251,8 @@ Step 卡片含义：
 |---|---|
 | `window_title_regex` | 通常包含券商品牌与产品名 |
 | `success_window_title_regex` | 必须锚定，很容易写得太窄 |
+
+  Rakuten **Demo** 已验证的写法：`^[0-9]+: RakutenSecurities-Demo - デモ口座 - Rakuten Securities, Inc\.$`。开头的 `^[0-9]+:` 是券商写进标题前段的数字账号**位置通配**，**不是你的账号号**，请勿填真实 Login ID。其它券商或 build 的认证后标题不同，**必须**用 `Detect Win32` 的标题建议或你实际观察到的标题重新确认。
 | UIA `control_ids` | 取决于 UIA provider，跨 build 不保证；**部分 build 完全不暴露 UIA** |
 | Win32 `anchors` | 是可见文案，随语言和品牌变 |
 | 菜单 caption 列表 | 代码常量，定制 build 文案可能不同 |
@@ -270,7 +308,7 @@ Web Admin **只绑定 loopback**，且每个写操作都需要 admin token。
 | **每个新券商都要 inspect** | 选择器因 build 而异，由 `Detect Win32` 建议 + 人工确认 |
 | **64-bit Python 驱动 32-bit 终端** | 自动化库会打印一条警告，是警告不是失败；原生 Win32 路线的操作不敏感于位数 |
 | **Group 是高级可选功能** | group 目标要求全部成员 Account 都绑定给调用者 |
-| **部分未在真机验证** | 完整 Slack 端到端、Group 登录、部分新适配器仅有单元测试，它们会报告 `WINDOWS_REAL_TEST_REQUIRED` 而不是伪造通过 |
+| **部分未在真机验证** | **Group 登录**、**Production Rakuten 实盘账号与真实新 OTP**、其它券商/build；它们会报告 `WINDOWS_REAL_TEST_REQUIRED` 而不是伪造通过。逐项见[验证矩阵](#验证矩阵-verification-matrix) |
 | **共用 Windows 账户** | 登录该 Windows 会话的任何人都能看到 Agent 窗口和数据目录 |
 | **本项目非券商官方产品** | 券商名称仅作为已验证的示例出现 |
 
@@ -284,7 +322,6 @@ Web Admin **只绑定 loopback**，且每个写操作都需要 admin token。
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | 报错症状对照表 |
 | [SECURITY.md](SECURITY.md) | 威胁模型、凭据处理、保证的边界 |
 | [docs/WINDOWS-MT4-TEST.md](docs/WINDOWS-MT4-TEST.md) | 验收必须覆盖什么的短清单 |
-| [docs/IMPLEMENTATION-REPORT.md](docs/IMPLEMENTATION-REPORT.md) | 做了什么，以及验证状态 |
 
 ## 13. 截图
 

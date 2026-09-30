@@ -32,7 +32,7 @@
 | 4 | Real Login | ✅ **是（第一次用真实 OTP）** | ✅ 是 |
 | 5 | Group | ✅ 是 | ✅ 是（多个账号） |
 
-**铁律：第一次只测单个账号 A → 成功后再测 Full Slack E2E → 最后才测 Group。**
+**铁律：第一次只测单个账号 A → 成功后再测 Slack 单账号 E2E → 最后才测 Group。**
 
 ---
 
@@ -296,7 +296,7 @@ Windows Test 页面顶部有 5 张 Step 卡片。**颜色是汇总，不是某�
 ### Step 2 — MT4 Detect（UIA Discovery）
 
 - **目的**：枚举进程与登录控件。UIA 找不到登录框时，会自动尝试你已启用的 Win32 dialog fallback。
-  运行前请**先手动打开 MT4 登录窗口并保持可见** —— 登录框不是独立的 UIA 顶层窗口时，只有它真实存在才可能被枚举到。
+  如果 auto-open 未能打开该券商的登录框，**手动打开登录框**后重试即可，后续步骤不受影响
 - **需要 OTP**：否
 - **操作**：
   1. 在 Account 下拉框里选你的测试账号
@@ -344,7 +344,7 @@ Windows Test 页面顶部有 5 张 Step 卡片。**颜色是汇总，不是某�
   2. 在 OTP 框输入本次 OTP
   3. 点 **Start real login test**
 - **预期**：登录成功，History 出现记录，报告里对应项 PASS
-- **Full Slack E2E（可选但推荐）**：
+- **Slack 单账号 E2E（已真机验证，建议自己再跑一遍）**：
   1. 点 **Start Full Slack E2E**（**不会**自动发 OTP）
   2. 页面给出 `ACTION REQUIRED`：在受控频道**手动**发送 `/mt4 A <OTP>`
   3. 回到页面点 **Await Full Slack result**
@@ -425,6 +425,16 @@ Step 2 Detect 会通过**窗口自己的菜单命令**打开登录框，不使�
 | `window_title_regex` | `^<当前对话框标题，已转义>$` |
 | `success_window_title_regex` | `^<当前认证后主窗口标题>$`，其中**你自己的 login id 已被泛化成 `.*`** |
 
+  Rakuten Demo 已验证的写法（**不要填真实 Login ID**）：
+
+  ```
+  ^[0-9]+: RakutenSecurities-Demo - デモ口座 - Rakuten Securities, Inc\.$
+  ```
+
+  开头的 `^[0-9]+:` 是券商把数字账号写进标题前段，这里是**位置通配**，**不是**你的账号号。
+  其它券商或 build 的认证后标题不同，**必须**用 Detect Win32 的标题建议、或你自己实际观察到的
+  标题重新确认，**不要直接照抄这一条**。
+
 泛化的意义：写死账号号的表达式换个账号就失效；泛化后同一表达式对同券商其它账号继续有效。
 
 ---
@@ -487,7 +497,7 @@ Step 2 Detect 会通过**窗口自己的菜单命令**打开登录框，不使�
 - [ ] Step 2 检测到候选控件，且 `Apply detected selectors` 后 Account `Test` 显示 `valid`
 - [ ] Step 3 PASS，Slack `Connection Test` 显示 `Connected`
 - [ ] Step 4 单账号 A 真实登录成功，History 有记录
-- [ ] （推荐）Full Slack E2E 手动发 `/mt4 A <凭据>` 后 `Await` 拿到结果
+- [x] Slack 单账号 E2E：手动发 `/mt4 A <凭据>` 后 `Await` 拿到私密结果（已真机验证）
 - [ ] （可选）Step 5 Group 按顺序执行，部分失败不中断
 - [ ] 报告中**没有** OTP / token 泄漏
 - [ ] History 里能查到本次记录
@@ -544,19 +554,38 @@ Step 2 Detect 会通过**窗口自己的菜单命令**打开登录框，不使�
 
 这一节很重要，避免把测试套件绿灯当成真机证据。
 
-| 能力 | 真机验证 | 说明 |
+状态含义：
+
+- ✅ **Verified on Windows** —— 在真实 Windows 机器上手动验收过
+- 🧪 **Covered by automated tests** —— 有自动化覆盖，但没有真机证据
+- ⚠️ **Optional / not yet real-world validated** —— 功能存在，但真机未验收
+
+| 能力 | 状态 | 说明 |
 |---|---|---|
-| Win32 dialog fallback 全链路 | ✅ **已验证** | Rakuten MT4 真实 32-bit 终端：找窗、填 Login ID、填凭据、选 server、点击 Login |
-| 多实例 A/B 进程隔离 | ✅ **已验证** | 两个 terminal.exe 实例，靠独立安装目录 + cwd 区分 |
-| Real Login 成功判定 | ✅ **已验证** | 登录框关闭 + 匹配 success regex 的窗口存在/变化 → SUCCESS |
-| auto-open 菜单命令 | ✅ **已验证** | 通过 WM_COMMAND 打开登录框，无坐标无盲打 |
-| 64-bit Python 控 32-bit MT4 | ✅ **已验证** | 枚举、读 class/ctrl-id/文本全部正常 |
-| Detect Win32 Inspector | ❌ **仅 unit tested** | fake 原生控件树；**真机对话框、真菜单、真实页面渲染均未跑过** |
-| Full Slack E2E | ❌ 未验证 | 仍需一次完整真机 Slack 往返 |
-| Group 登录 | ❌ 未验证 | Group 业务当前暂停 |
-| 每用户 Account 绑定 + 私密投递 | ❌ 仅 unit tested | Slack 端真实多用户行为未验证 |
+| Windows bootstrap / Web Admin | ✅ **已验证** | `install.bat` / `start.bat` / `test-windows.bat` 与 Web Admin 全部可用 |
+| 单账号 Rakuten Demo 真实登录 | ✅ **已验证** | Demo 凭据真实登录进 MT4 |
+| 多实例 A/B 进程隔离 | ✅ **已验证** | 两个 `terminal.exe` 实例，靠独立安装目录 + cwd 区分 |
+| auto-open 菜单命令 | ✅ **已验证** | 通过 `WM_COMMAND` 打开登录框，无坐标无盲打 |
+| Win32 fallback 控件输入 | ✅ **已验证** | 真实 32-bit 终端：找窗、填 Login ID、填凭据、选 server、点击 Login |
+| Win32 原生成功判定 | ✅ **已验证** | 认证主窗口标题走**原生**枚举（strict PID scope），不再依赖 UIA |
+| 64-bit Python 控 32-bit MT4 | ✅ **已验证** | pywinauto 位数 warning 在本路线上为非阻断提示 |
+| History 记录 | ✅ **已验证** | 成功/失败均落 History，**不含凭据** |
+| Slack Socket Mode 连接 / auth / allowlist | ✅ **已验证** | 真实 Slack 往返 |
+| Slack `/mt4 status` | ✅ **已验证** | 只列调用者自己绑定的 alias |
+| Slack 单账号 E2E | ✅ **已验证** | `/mt4 A <凭据>` → Agent → MT4 真实登录 → 私密结果 / History |
+| 每用户 Account 绑定 + 跨账号拒绝 | ✅ **已验证** | 两个 Slack 用户各自只能操作绑定给自己的 Account |
+| 私密投递（DM / ephemeral） | ✅ **已验证** | 频道内回复为 ephemeral，私聊走 DM |
+| Account Duplicate | ✅ **已验证** | 实际用 A 复制出 B |
+| Detect Win32 on Rakuten | ✅ **已验证** | 探测可正常结束；仅当全部字段 HIGH 才提供 Apply |
+| Group 登录 | ⚠️ **可选 / 真机未验收** | 代码与自动化测试完整，但 Group 真机 E2E 尚未跑，**请勿当已验证** |
+| Production Rakuten 实盘账号 / 真实新 OTP | ⚠️ **真机未验收** | 上面的真实登录均为 **Demo**；实盘账号与真实新 OTP 流程未验收 |
+| 其它券商 / 其它 MT4 build | ⚠️ **可通过 Inspector 适配** | **未声称已验证**，需按 `NEW-MT4-ADAPTER.md` 逐个确认 |
 
 > **原则**：任何依赖真机而未验证的项，一律返回 `WINDOWS_REAL_TEST_REQUIRED`，**不会**把 mock 或静态检查当成真实登录成功。
+>
+> **关于 Full Slack E2E 这个词**：旧文档里它曾指“连 Group、真实实盘 OTP 一起跑”。**现在拆开说**：
+> 单账号 Slack → Agent → MT4 **Demo** 真实登录 → 私密结果 已 ✅ 验证；
+> Group 与实盘新 OTP 仍为 ⚠️ 未验收。
 
 ---
 

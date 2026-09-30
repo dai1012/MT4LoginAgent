@@ -27,12 +27,13 @@ Agent は自分のマシン上で動きます。公開サーバーも、受信�
 > [新しいブローカーへの対応](#9-新しいブローカーへの対応)を参照してください。
 >
 > **検証状況の正直な説明**: MT4 自動化の中核(Win32 ログインダイアログの一連の操作、
-> 複数ターミナルの分離、ログイン成功の判定、ダイアログの自動オープン)は
-> **実 Windows + 実ブローカターミナルで検証済み**です。一方、Slack 経由の完全な
-> エンドツーエンド往復、グループログイン、そして比較的新しい Win32 Inspector は
-> **未検証**です。実機が必要で未検証の項目は `WINDOWS_REAL_TEST_REQUIRED` を返し、
-> **合格を偽装することはありません**。項目ごとの境界は
-> [既知の制約](#11-既知の制約)にあります。
+> 複数ターミナルの分離、ログイン成功の判定、ダイアログの自動オープン)、および
+> 単一アカウントの Slack 経路（`/mt4 A <credential>` → Agent → MT4 **Demo** 実ログイン →
+> 非公開結果）は**実 Windows + 実ブローカターミナルで検証済み**です。
+> **未検証**なのは **グループログイン**、**Production Rakuten の実口座と実OTP**、
+> そして**其它の証券会社・其它 build** のみです。実機が必要で未検証の項目は
+> `WINDOWS_REAL_TEST_REQUIRED` を返し、**合格を偽装することはありません**。
+> 項目ごとの状態は[検証マトリクス](#検証マトリクス-verification-matrix)にあります。
 
 ## 目次
 
@@ -44,6 +45,7 @@ Agent は自分のマシン上で動きます。公開サーバーも、受信�
 - [Win32 Inspector](#7-win32-inspector)
 - [新しいブローカーへの対応](#9-新しいブローカーへの対応)
 - [セキュリティモデル](#10-セキュリティモデル)
+- [検証マトリクス](#検証マトリクス-verification-matrix)
 - [既知の制約](#11-既知の制約)
 - [ドキュメント一覧](#12-ドキュメント一覧)
 - [スクリーンショット](#13-スクリーンショット)
@@ -51,6 +53,39 @@ Agent は自分のマシン上で動きます。公開サーバーも、受信�
 - [データとファイル](#15-データとファイル)
 - [停止・更新・アンインストール](#16-停止更新アンインストール)
 - [ライセンス](#17-ライセンス)
+
+## 検証マトリクス (verification matrix)
+
+テストスイートの緑を実機証拠と取り違えないよう、分けて明記します。
+
+- ✅ **Verified on Windows** — 実機の Windows で人手を介して受入済み
+- 🧪 **Covered by automated tests** — 自動テストあり、実機証拠なし
+- ⚠️ **Optional / not yet real-world validated** — コードは存在するが実機未受入
+
+| 機能 | 状態 | 備考 |
+|---|---|---|
+| Windows セットアップ / Web Admin | ✅ 検証済み | `install.bat`、`start.bat`、`test-windows.bat` |
+| 単一アカウント Rakuten **Demo** 実ログイン | ✅ 検証済み | Demo の認証情報で実際にログイン |
+| 複数インスタンス A/B 分離 | ✅ 検証済み | 別インストールフォルダ + cwd |
+| 自動オープン（ログインダイアログ） | ✅ 検証済み | `WM_COMMAND`、座標もキー連打も使わない |
+| Win32 フォールバックの入力 | ✅ 検証済み | Login ID・認証情報・server・Login クリック |
+| Win32 **ネイティブ**成功判定 | ✅ 検証済み | タイトルをネイティブ取得、strict PID scope、UIA 不要 |
+| 32-bit 端末を 64-bit Python で操作 | ✅ 検証済み | bitness warning は非阻断 |
+| History | ✅ 検証済み | 認証情報は保存しない |
+| Slack Socket Mode / allowlist | ✅ 検証済み | 実 Slack 往復 |
+| Slack `/mt4 status` | ✅ 検証済み | 呼び出し本人に紐付いた alias のみ |
+| **Slack 単一アカウント E2E** | ✅ 検証済み | `/mt4 A <credential>` → Agent → MT4 実ログイン → 非公開結果 |
+| ユーザー別 Account 紐付けと越境拒否 | ✅ 検証済み | 2 ユーザーが互いの Account に到達できない |
+| 非公開配信（DM / ephemeral） | ✅ 検証済み | チャンネル内は ephemeral |
+| Account Duplicate | ✅ 検証済み | 実際に A から B を作成 |
+| Detect Win32（Rakuten） | ✅ 検証済み | 検知は正常終了、全項目 HIGH のときだけ Apply 提示 |
+| **Group ログイン** | ⚠️ 任意 / 実機未受入 | コードとテストは揃っているが実機 E2E 未実施 |
+| **Production Rakuten 実口座 / 実OTP** | ⚠️ 実機未受入 | 上記の実ログインはすべて **Demo** |
+| 其它の証券会社 / 其它 build | ⚠️ Inspector で適応可 | **検証済みとは主張しない** |
+
+> 旧称「Full Slack E2E」はかつて Group と実OTPまで含む意味でした。分けて記します:
+> **単一アカウントの Slack → Agent → MT4 Demo 実ログイン → 非公開結果** は ✅、
+> **Group** と **実OTP** は ⚠️ のままです。
 
 ## 1. プロジェクトの範囲
 
@@ -203,6 +238,12 @@ Step カードの意味:
 
 ## 7. Win32 Inspector
 
+**用途**: 新しい証券会社、または同じ証券会社の新しい MT4 build。
+**新しいブローカー / build 適応専用** — `MT4_DISCOVERY_READY` が PASS の設定済み Account では
+不要に実行できます。誤クリックしても安全です。Account・discovery route・認証情報を一切変更
+しない読み取り専用の有界プローブで、ログインダイアログを開くことだけがあります。書き込みは
+**Apply detected Win32 settings** を明示的に押したときだけです。
+
 **使う場面**: 新しいブローカー、または同一ブローカーの新しい MT4 ビルド。
 **使わない場面**: 同一ブローカー・同一ビルドの 2 つ目のアカウント ——
 その場合は **Account 複製**のほうが速いです。
@@ -235,6 +276,11 @@ Account 新規  →  その MT4 を起動  →  Windows Test: Detect Win32
 |---|---|
 | `window_title_regex` | 多くの場合、ブローカーのブランド名と製品名を含みます |
 | `success_window_title_regex` | アンカーが必要で、狭く書きがちです |
+
+  Rakuten **Demo** で検証済みの書き方: `^[0-9]+: RakutenSecurities-Demo - デモ口座 - Rakuten Securities, Inc\.$`。先頭の `^[0-9]+:` はブローカーがタイトル先頭に
+  入れる数字の**位置ワイルドカード**であり、**あなたの口座番号ではありません**。実 Login ID は
+  入れないでください。其它の証券会社・build では認証後タイトルが異なるため、
+  `Detect Win32` のタイトル候補か実際に観察したタイトルで**再確認**してください。
 | UIA の `control_ids` | UIA プロバイダ依存で、ビルド間で保証されない。**ビルドによっては UIA を全く公開しない** |
 | Win32 の `anchors` | 可視文言なので、言語やブランドで変わります |
 | メニュー caption 一覧 | コード上の定数です。カスタムビルドの文言は異なる可能性があります |
@@ -312,7 +358,6 @@ ustsねAbility いは正直に列挙します。自分 undo を実際より大�
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | 症状と実際の原因の対応表 |
 | [SECURITY.md](SECURITY.md) | 脅威モデル、クレデンシャル処理、保証の境界 |
 | [docs/WINDOWS-MT4-TEST.md](docs/WINDOWS-MT4-TEST.md) | 受け入れ実行で何をカバーすべきかの短いチェックリスト |
-| [docs/IMPLEMENTATION-REPORT.md](docs/IMPLEMENTATION-REPORT.md) | 何を実装したか、その検証状況 |
 
 ## 13. スクリーンショット
 

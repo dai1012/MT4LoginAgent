@@ -18,13 +18,17 @@ test-windows.bat
 Phase 1 Environment / Safe Checks   AUTOMATED
 Phase 2 MT4 Discovery / UIA         SEMI_AUTOMATED
 Phase 3 Slack Safe Tests            SEMI_AUTOMATED
-Phase 4 Internal Real Login         MANUAL CONFIRMATION
-Phase 4 Full Slack E2E              SEMI_AUTOMATED / MANUAL
+Phase 4 Real Login                  MANUAL CONFIRMATION
+Phase 4 Slack single-account E2E    SEMI_AUTOMATED / MANUAL
 Phase 5 Group                       OPTIONAL / MANUAL CONFIRMATION
 Destructive cases                   MANUAL_TEST_REQUIRED
 ```
 
-Test Runner 默认不会输入 OTP、启动真实登录或向真实 Slack 批量发消息。Real Login 和 Group 必须在 Web UI 中明确确认；Full Slack E2E 由用户自己发送 `/mt4 A <OTP>`，Test Runner 只等待并关联结果。
+Test Runner 默认不会输入认证信息、启动真实登录或向真实 Slack 批量发消息。Real Login 和 Group 必须在 Web UI 中明确确认；Slack 单账号 E2E 由用户自己发送 `/mt4 A <凭据>`，Test Runner 只等待并关联结果。
+
+> **验证状态**（逐项表见 [`WINDOWS-TEST-GUIDE.md`](WINDOWS-TEST-GUIDE.md) §10b）：
+> Phase 1~4 的单账号链路（含 Slack → Agent → MT4 **Demo** 真实登录 → 私密结果）已在真机验证；
+> **Phase 5 Group** 与 **Production 实盘账号 / 真实新 OTP** 仍为**真机未验收**。
 
 每次 Test Runner 运行会在 runtime data 目录生成 report.html、report.json 和 logs-sanitized.txt；只有在 Phase 2 实际执行 MT4/UIA Discovery 时，才会额外生成 uia-tree-sanitized.json：
 

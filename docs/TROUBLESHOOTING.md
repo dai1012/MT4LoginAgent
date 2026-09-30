@@ -155,18 +155,39 @@ The Agent submits the credential, the login dialog closes, MT4 is visibly logged
 and the History still records a failure with `ui_verification_unverified`.
 
 That means the Agent could not **prove** the login succeeded, not that the login
-failed. It looks for the window your `success_window_title_regex` matches and requires
-one of two things: that such a window newly appeared, or that its title changed. If the
-main window already carried the logged-in title **before** the attempt — because a
-previous session was left open — neither happened, and the Agent refuses to claim
-success it did not observe.
+failed. It looks for a top-level window whose title matches your
+`success_window_title_regex`, scoped strictly to that Account's own process.
 
-Fix the expression rather than the login:
+### The most common cause is an expression that matches nothing
 
-- make it describe the stable broker and server wording, not the account:
-  `^Rakuten.*Demo - .* - Rakuten Securities, Inc\.$`
-- do not put the account's own id in it
-- keep it anchored
+Check that the field is **not empty**. An Account with no `success_window_title_regex`
+cannot be confirmed at all, and the Agent now says so immediately instead of waiting:
+
+> 该 Account 未配置 success_window_title_regex，无法确认登录成功
+
+If it is filled but nothing matches, look at the anchored stable broker and server
+wording, not the account:
+
+```
+^[0-9]+: RakutenSecurities-Demo - デモ口座 - Rakuten Securities, Inc\.$
+```
+
+The leading `^[0-9]+:` is a positional wildcard for the broker's numeric prefix, not an
+account number. Do not put the account's own id in the expression, and keep it
+anchored. The verified Rakuten Demo title differs on other brokers and builds, so
+confirm it against what you actually observe.
+
+### A UIA-only broker is no longer a cause on the Win32 route
+
+Earlier versions read the authenticated title through UI Automation. On a broker whose
+login dialog UIA cannot see — Rakuten MT4 among them — the login form was written
+natively while the verification still looked through UIA, so a login that genuinely
+succeeded was reported as a failure.
+
+On an Account with the Win32 fallback enabled, the success and failure titles are now
+read with the **same native top-level window enumeration** the login form is written
+with, scoped to that Account's pid. If you still see `ui_verification_unverified`
+there, the expression is the thing to fix, not the interpreter.
 
 `Detect Win32` proposes an anchored expression for you, already generalised away from
 the account's id; it is shown for copying, never written for you.

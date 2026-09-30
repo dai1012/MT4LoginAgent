@@ -28,13 +28,14 @@ database.
 > broker-specific configuration — dialog control ids, menu captions, window titles — is
 > broker dependent. See [Adapting a new broker](#9-adapting-a-new-broker).
 >
-> **Honest verification status.** The core MT4 automation — the Win32 login dialog
-> end-to-end, multi-terminal isolation, success detection, and automatic dialog
-> opening — **has been verified on real Windows with a real broker terminal**. What
-> has **not** been verified on hardware: the full Slack end-to-end round trip, group
-> login, and the newer Win32 Inspector. Anything that needs real hardware and has not
-> had it reports `WINDOWS_REAL_TEST_REQUIRED` and **never fabricates a pass**. The
-> item-by-item boundary is in [Known limitations](#11-known-limitations).
+> **Honest verification status.** The core MT4 automation and the single-account
+> Slack path — `/mt4 A <credential>` → Agent → MT4 **Demo** real login → private result —
+> **has been verified on real Windows with a real broker terminal**. What has **not**
+> been verified on hardware is: **group login**, a **production Rakuten live account and
+> a real fresh OTP**, and **any other broker or MT4 build**. Anything that needs real
+> hardware and has not had it reports `WINDOWS_REAL_TEST_REQUIRED` and **never
+> fabricates a pass**. Item by item is in the
+> [verification matrix](#verification-matrix-verification-matrix).
 
 ## Contents
 
@@ -46,6 +47,7 @@ database.
 - [Win32 Inspector](#7-win32-inspector)
 - [Adapting a new broker](#9-adapting-a-new-broker)
 - [Security model](#10-security-model)
+- [Verification matrix](#verification-matrix-verification-matrix)
 - [Known limitations](#11-known-limitations)
 - [Documentation](#12-documentation)
 - [Screenshots](#13-screenshots)
@@ -53,6 +55,40 @@ database.
 - [Data and files](#15-data-and-files)
 - [Stopping, updating, uninstalling](#16-stopping-updating-uninstalling)
 - [Licence](#17-licence)
+
+## Verification matrix (verification matrix)
+
+Written out separately so a green test suite is never mistaken for real-hardware
+evidence.
+
+- ✅ **Verified on Windows** — accepted by hand on a real Windows machine
+- 🧪 **Covered by automated tests** — automated coverage, no real-hardware evidence
+- ⚠️ **Optional / not yet real-world validated** — the code exists, the real run does not
+
+| Capability | Status | Note |
+|---|---|---|
+| Windows install / Web Admin | ✅ Verified | `install.bat`, `start.bat`, `test-windows.bat` |
+| Single-account Rakuten **Demo** real login | ✅ Verified | Demo credential, real login |
+| Multi-instance A/B isolation | ✅ Verified | Separate install folder + cwd |
+| Auto-open login dialog | ✅ Verified | `WM_COMMAND` menu command, no coordinates, no blind keys |
+| Win32 fallback control input | ✅ Verified | Login ID, credential, server, click Login |
+| Win32 **native** success verification | ✅ Verified | Titles read natively, strict PID scope, no UIA |
+| 64-bit Python driving a 32-bit terminal | ✅ Verified | The bitness warning is non-blocking |
+| History | ✅ Verified | No credential is stored |
+| Slack Socket Mode / allowlist | ✅ Verified | Real Slack round trip |
+| Slack `/mt4 status` | ✅ Verified | Lists only the caller's bound aliases |
+| **Slack single-account E2E** | ✅ Verified | `/mt4 A <credential>` → Agent → MT4 real login → private result |
+| Per-user Account binding + cross-account denial | ✅ Verified | Two Slack users cannot reach each other's accounts |
+| Private delivery (DM / ephemeral) | ✅ Verified | Ephemeral in a channel |
+| Account Duplicate | ✅ Verified | B was actually created by duplicating A |
+| Detect Win32 (Rakuten) | ✅ Verified | The inspection completes; Apply is offered only when all fields are HIGH |
+| **Group login** | ⚠️ Optional / not real-world validated | Code and tests are complete, the real run is not |
+| **Production Rakuten live account / real fresh OTP** | ⚠️ Not real-world validated | Every real login above used **Demo** |
+| Other brokers / other builds | ⚠️ Adaptable via the Inspector | **Not claimed as verified** |
+
+> The old term "Full Slack E2E" once meant "Group and a live OTP as well". Split apart:
+> **single account, Slack → Agent → MT4 Demo real login → private result** is ✅;
+> **Group** and a **live fresh OTP** remain ⚠️.
 
 ## 1. Project scope
 
@@ -210,6 +246,10 @@ A full walkthrough, from a blank machine to acceptance, is in
 ## 7. Win32 Inspector
 
 **Use it for**: a new broker, or a new MT4 build from the same broker.
+**New broker / MT4 adaptation only** — a configured Account does not need it while
+`MT4_DISCOVERY_READY` is PASS. Clicking it by accident is safe: it is a read-only, bounded
+probe that changes no Account, no discovery route and no credential; it may open the
+login dialog, and only the explicit **Apply detected Win32 settings** action writes.
 **Do not use it for**: a second account at the same broker and build — use
 **Account Duplicate**, which is faster.
 
@@ -241,6 +281,11 @@ Details: [docs/NEW-MT4-ADAPTER.md](docs/NEW-MT4-ADAPTER.md).
 |---|---|
 | `window_title_regex` | usually contains the broker's brand and product name |
 | `success_window_title_regex` | must be anchored, and is easy to write too narrowly |
+
+  Verified for Rakuten **Demo**: `^[0-9]+: RakutenSecurities-Demo - デモ口座 - Rakuten Securities, Inc\.$`. The leading `^[0-9]+:` is a positional
+  wildcard for the broker's numeric prefix — **not** your account number — so do not put a
+  real Login ID there. Other brokers and builds carry different authenticated titles and
+  **must** be re-confirmed with the `Detect Win32` title suggestion or a title you observed.
 | UIA `control_ids` | determined by the UIA provider and not guaranteed across builds; **some builds expose no UIA at all** |
 | Win32 `anchors` | these are visible strings, so they change with language and branding |
 | the menu caption list | a code constant; a customised build may word it differently |
@@ -321,7 +366,6 @@ does not.
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Symptoms and what they actually mean |
 | [SECURITY.md](SECURITY.md) | Threat model, credential handling, the limits of the guarantees |
 | [docs/WINDOWS-MT4-TEST.md](docs/WINDOWS-MT4-TEST.md) | A shorter checklist of what the acceptance run must cover |
-| [docs/IMPLEMENTATION-REPORT.md](docs/IMPLEMENTATION-REPORT.md) | What was built, and its verification status |
 
 ## 13. Screenshots
 
