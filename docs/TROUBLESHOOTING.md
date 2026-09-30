@@ -15,6 +15,7 @@ the Agent produces; none contains an account number, a token or a credential.
 8. [MT4 instance collision when enabling an Account](#8-mt4-instance-collision-when-enabling-an-account)
 9. [ui_verification_unverified after a login that worked](#9-ui_verification_unverified-after-a-login-that-worked)
 10. [The Agent warns about 32-bit and 64-bit Python](#10-the-agent-warns-about-32-bit-and-64-bit-python)
+10b. [Detect Win32 reports several candidate windows](#10b-detect-win32-reports-several-candidate-windows)
 11. [The Slack command is rejected](#11-the-slack-command-is-rejected)
 12. [The App Home Messages tab says messaging is turned off](#12-the-app-home-messages-tab-says-messaging-is-turned-off)
 13. [The History page looks empty](#13-the-history-page-looks-empty)
@@ -184,8 +185,33 @@ which are not bitness sensitive, and reading window identities, class names, con
 ids and text across the two bitnesses has already been exercised on a real 32-bit MT4.
 You do not need a 32-bit Python to use the Win32 fallback.
 
+**Treat it as a non-blocking notice once the Win32 fallback has logged in on your
+machine.** A real 32-bit MT4 was driven through this route successfully with a 64-bit
+interpreter, so the warning alone is never a reason to switch. Login verification also
+observes the terminal through the same native enumeration the login form is written
+with, so a successful login is not missed because of this warning.
+
 The one thing to keep in mind: forcing a 32-bit interpreter for the whole Agent would
 be the wrong trade, because it would break brokers whose terminals are 64-bit.
+
+## 10b. Detect Win32 reports several candidate windows
+
+```
+2 login-shaped windows matched in this MT4 process; refusing to choose.
+```
+
+The inspector found more than one top-level window of **that one MT4 process** that has
+both a text field and a button, so it refused to guess which one is the login form.
+This is deliberate: a wrong control id is worse than no suggestion.
+
+**This never affects Real Login for an Account that is already configured.** The
+inspector exists to help you adapt a *new* broker or a *new* MT4 build; a configured
+Account with `MT4_DISCOVERY_READY` at PASS does not need it.
+
+What to do: close the unrelated windows in that terminal — typically an **order
+dialog**, a **new account** dialog, or any other window with an input field — and run
+**Detect Win32** again. If instead the message says no window was found, the login
+dialog did not open: open it by hand and run it again.
 
 ## 11. The Slack command is rejected
 

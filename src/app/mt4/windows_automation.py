@@ -184,7 +184,7 @@ class WindowsAutomation:
             return AutomationResult(
                 status=LoginStatus.TIMEOUT,
                 category=ErrorCategory.TIMEOUT,
-                message="Windows UI Automation exceeded its hard wait budget",
+                message="Windows automation worker exceeded its hard wait budget",
                 started_at=started,
                 verification=WINDOWS_REAL_TEST_REQUIRED,
             )
@@ -868,7 +868,8 @@ class WindowsAutomation:
             return existing, "the login dialog was opened through the window menu"
         return None, (
             f"{why}. If this broker uses a different menu caption, open the login "
-            "dialog by hand and run Detect Win32 again."
+            "dialog by hand and run Detect Win32 again. This never affects Real "
+            "Login for an Account that is already configured."
         )
 
     def _win32_locate_dialog(self, pids: list[int]) -> tuple[Any | None, str]:
@@ -895,7 +896,11 @@ class WindowsAutomation:
         if not candidates:
             return None, "no window with both an Edit and a Button was found"
         if len(candidates) > 1:
-            return None, f"{len(candidates)} login-shaped windows matched; refusing to choose"
+            return None, (
+                f"{len(candidates)} login-shaped windows matched in this MT4 process; "
+                "refusing to choose. Close the unrelated order / new-account / other "
+                "input windows and run Detect Win32 again."
+            )
         return candidates[0], "one login-shaped window matched"
 
     def _win32_login_shaped(self, dialog: Any) -> bool:
@@ -1215,6 +1220,76 @@ class WindowsAutomation:
             return None
         return None
 
+    def _native_window_state(self, pids: list[int]) -> dict[str, str]:
+        """Native top-level window titles, strictly scoped to the given pids.
+
+        UI Automation does not expose some brokers' login dialogs, and on a 64-bit
+        interpreter driving a 32-bit terminal it may not expose the authenticated
+        main window either. The login path already writes the form through native
+        Win32 calls, so the observation channel has to be the same one: otherwise a
+        login that genuinely succeeded can never be confirmed. Only window metadata
+        is read here (handle, pid, class, title); no control text or value is touched.
+        """
+        expected = {int(pid) for pid in pids}
+        state: dict[str, str] = {}
+        for handle, process_id, _class_name, title in self._enum_top_windows():
+            if process_id not in expected or not title:
+                continue
+            state[f"handle:{handle}"] = title
+        return state
+
+    @staticmethod
+    def _success_expression(account: AccountConfig) -> re.Pattern[str] | None:
+        if not account.success_window_title_regex:
+            return None
+        return re.compile(account.success_window_title_regex)
+
+    def _observed_success_state(
+        self,
+        pids: list[int],
+        account: AccountConfig,
+        *,
+        native_only: bool,
+        expression: re.Pattern[str] | None = None,
+    ) -> dict[str, str]:
+        """Titles that may satisfy the success expression, from the best channel.
+
+        On the Win32 route the native enumeration is authoritative and UIA is skipped
+        during the poll, because UIA is both blind for those brokers and the slowest
+        part of the loop. The UIA primary route is untouched.
+
+        The native titles are filtered by the same anchored expression the UIA channel
+        applies. Without that filter any renamed or newly opened window would count as
+        an authenticated one, which is the mirror image of the bug this fixes.
+        """
+        state: dict[str, str] = {}
+        if account.win32_fallback.enabled:
+            pattern = expression or self._success_expression(account)
+            if pattern is not None:
+                state = {
+                    key: title
+                    for key, title in self._native_window_state(pids).items()
+                    if pattern.search(title)
+                }
+        if native_only:
+            return state
+        for key, title in self._success_window_state(pids, account).items():
+            state.setdefault(key, title)
+        return state
+
+    def _observed_failure_state(
+        self, pids: list[int], account: AccountConfig, *, native_only: bool
+    ) -> dict[str, str]:
+        """Case-folded window text used to spot a broker rejection."""
+        state: dict[str, str] = {}
+        if account.win32_fallback.enabled:
+            state = {key: text.casefold() for key, text in self._native_window_state(pids).items()}
+        if native_only:
+            return state
+        for key, text in self._visible_window_state(pids).items():
+            state.setdefault(key, text)
+        return state
+
     def _wait_for_result(
         self,
         pids: list[int],
@@ -1224,14 +1299,25 @@ class WindowsAutomation:
         failure_windows_before: dict[str, str],
     ) -> tuple[LoginStatus, ErrorCategory, str, str]:
         deadline = time.monotonic() + account.login_timeout_seconds
-        success_expression = (
-            re.compile(account.success_window_title_regex)
-            if account.success_window_title_regex
-            else None
-        )
+        success_expression = self._success_expression(account)
+        if success_expression is None:
+            # Without a success expression no observation can ever confirm the
+            # login, so waiting out the whole timeout only delays the same answer.
+            return (
+                LoginStatus.FAILED,
+                ErrorCategory.UI_VERIFICATION_UNVERIFIED,
+                "该 Account 未配置 success_window_title_regex，无法确认登录成功；"
+                "请在 Web Admin 填入后再运行 Real Login",
+                WINDOWS_REAL_TEST_REQUIRED,
+            )
+        # The Win32 route observes natively for the whole poll; UIA gets one last
+        # chance only if the wait ends without a native match.
+        native_only = account.win32_fallback.enabled
         closed_without_verification = False
         while time.monotonic() < deadline:
-            current_failure_state = self._visible_window_state(pids)
+            current_failure_state = self._observed_failure_state(
+                pids, account, native_only=native_only
+            )
             for key, text in current_failure_state.items():
                 if key in failure_windows_before and failure_windows_before[key] == text:
                     continue
@@ -1254,7 +1340,12 @@ class WindowsAutomation:
                 if not login_window.exists():
                     closed_without_verification = True
                     if success_expression is not None:
-                        current_success_state = self._success_window_state(pids, account)
+                        current_success_state = self._observed_success_state(
+                            pids,
+                            account,
+                            native_only=native_only,
+                            expression=success_expression,
+                        )
                         state_changed = any(
                             key not in success_windows_before
                             or title != success_windows_before[key]
@@ -1286,6 +1377,32 @@ class WindowsAutomation:
             except Exception:
                 pass
             time.sleep(0.25)
+        if native_only and closed_without_verification:
+            # A broker that also enabled the Win32 fallback may still be UIA driven,
+            # so give the skipped channel exactly one chance before reporting that
+            # verification failed. Native polling is not abandoned as a result.
+            try:
+                if not login_window.exists():
+                    fallback_state = self._observed_success_state(
+                        pids,
+                        account,
+                        native_only=False,
+                        expression=success_expression,
+                    )
+                    if any(
+                        key not in success_windows_before
+                        or title != success_windows_before[key]
+                        for key, title in fallback_state.items()
+                    ) or fallback_state:
+                        return (
+                            LoginStatus.SUCCESS,
+                            ErrorCategory.NONE,
+                            "Login dialog closed while a window matching the "
+                            "configured authenticated title was present",
+                            "authenticated_window_present_after_login_closed",
+                        )
+            except Exception:
+                pass
         if closed_without_verification:
             return (
                 LoginStatus.FAILED,

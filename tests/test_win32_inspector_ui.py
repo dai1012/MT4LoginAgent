@@ -140,3 +140,54 @@ def test_win32_section_never_touches_credentials_or_identity_values(client):
     ):
         assert banned not in section, banned
     assert "never reads the credential field" in section.lower()
+
+
+def test_detect_win32_declares_its_scope_for_configured_accounts(client):
+    """A user with a working account must not read it as a required step."""
+    page = _page(client)
+    assert "仅用于新券商 / 新 MT4 版本适配" in page
+    assert "New broker / MT4 adaptation only." in page
+    assert "MT4_DISCOVERY_READY" in page
+    # The read-only promise stays.
+    assert "The inspection never reads the credential field." in page
+
+
+def test_inspector_panel_states_it_cannot_affect_a_configured_account(client):
+    script = _script(client)
+    section = _win32_section(script)
+    assert "scopeCopy" in section
+    assert "不会影响已配置 Account 的 Real Login。" in section
+    # It must appear on both outcomes, not only the happy one.
+    assert section.count("${esc(scopeCopy)}") >= 2
+
+
+def test_multiple_candidates_advises_closing_windows_not_opening_the_dialog(client):
+    script = _script(client)
+    section = _win32_section(script)
+    assert "multipleCandidates" in section
+    assert "login-shaped windows matched" in section
+    assert "Close the unrelated order" in section
+    # The close-unrelated advice must not tell the user to open the dialog.
+    assert "open the login dialog by hand" not in section.split("noCandidates")[0]
+
+
+def test_no_candidate_is_the_only_case_that_suggests_opening_the_dialog(client):
+    script = _script(client)
+    section = _win32_section(script)
+    assert "no window with both an Edit and a Button" in section
+    assert "open it by hand and retry" in section
+
+
+def test_troubleshooting_explains_multiple_candidates_and_the_bitness_warning():
+    from pathlib import Path
+
+    guide = Path(__file__).resolve().parent.parent / "docs" / "TROUBLESHOOTING.md"
+    text = guide.read_text(encoding="utf-8")
+    assert "several candidate windows" in text
+    assert "close the unrelated windows" in text.lower()
+    assert "never affects Real Login" in text
+    # The bitness warning must be documented as non-blocking, not as a reason to
+    # change interpreters.
+    assert "32-bit application should be automated using 32-bit Python" in text
+    assert "non-blocking notice" in text
+    assert "You do not need a 32-bit Python" in text

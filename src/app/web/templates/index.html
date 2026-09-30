@@ -136,9 +136,10 @@
         <label>Account<select id="test-account"><option value="">选择 Account</option></select></label>
         <div class="actions">
           <button class="button" data-action="run-test-discovery">Detect</button>
-          <button class="button secondary" data-action="run-win32-inspect" id="win32-inspect-btn" disabled>Detect Win32</button>
-        </div>
-        <p class="muted">Detect Win32 only reads the login dialog and changes nothing by itself. Nothing is saved until a human applies. The inspection never reads the credential field.</p>
+            <button class="button secondary" data-action="run-win32-inspect" id="win32-inspect-btn" disabled>Detect Win32</button>
+          </div>
+          <div class="warning-box">仅用于新券商 / 新 MT4 版本适配；已配置且 MT4_DISCOVERY_READY=PASS 的 Account 不需要运行。<br><span class="muted">New broker / MT4 adaptation only. Configured accounts do not need this when MT4_DISCOVERY_READY is PASS.</span></div>
+          <p class="muted">Detect Win32 only reads the login dialog and changes nothing by itself. Nothing is saved until a human applies. The inspection never reads the credential field.</p>
         <div id="test-controls"></div>
         <div id="win32-inspector"></div>
         <h3>Phase 3 — Slack Safe Tests</h3>
